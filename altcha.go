@@ -63,12 +63,18 @@ type ServerSignaturePayload struct {
 
 // ServerSignatureVerificationData represents the extracted verification data
 type ServerSignatureVerificationData struct {
-	Expire   int64    `json:"expire"`
-	Fields   []string `json:"fields"`
-	Reasons  []string `json:"reasons"`
-	Score    float64  `json:"score"`
-	Time     int64    `json:"time"`
-	Verified bool     `json:"verified"`
+	Classification   string   `json:"classification"`
+	Country          string   `json:"country"`
+	DetectedLanguage string   `json:"detectedLanguage"`
+	Email            string   `json:"email"`
+	Expire           int64    `json:"expire"`
+	Fields           []string `json:"fields"`
+	FieldsHash       string   `json:"fieldsHash"`
+	IpAddress        string   `json:"ipAddress"`
+	Reasons          []string `json:"reasons"`
+	Score            float64  `json:"score"`
+	Time             int64    `json:"time"`
+	Verified         bool     `json:"verified"`
 }
 
 // Solution holds the result of solving a challenge.
@@ -307,6 +313,10 @@ func VerifyServerSignature(payload interface{}, hmacKey string) (bool, ServerSig
 	var verificationData ServerSignatureVerificationData
 	params, err := url.ParseQuery(parsedPayload.VerificationData)
 	if err == nil {
+		verificationData.Classification = params.Get("classification")
+		verificationData.Country = params.Get("country")
+		verificationData.DetectedLanguage = params.Get("detectedLanguage")
+		verificationData.Email = params.Get("email")
 		verificationData.Expire, _ = strconv.ParseInt(params.Get("expire"), 10, 64)
 		verificationData.Fields = strings.Split(params.Get("fields"), ",")
 		verificationData.Reasons = strings.Split(params.Get("reasons"), ",")
