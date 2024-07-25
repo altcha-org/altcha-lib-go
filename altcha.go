@@ -53,6 +53,15 @@ type Challenge struct {
 	Signature string `json:"signature"`
 }
 
+// Payload represents a solution to a Challenge
+type Payload struct {
+	Algorithm string `json:"algorithm"`
+	Challenge string `json:"challenge"`
+	Number    int64  `json:"number"`
+	Salt      string `json:"salt"`
+	Signature string `json:"signature"`
+}
+
 // ServerSignaturePayload represents the structure of the payload for server signature verification
 type ServerSignaturePayload struct {
 	Algorithm        Algorithm `json:"algorithm"`
@@ -83,11 +92,6 @@ type Solution struct {
 	Took   time.Duration
 }
 
-// Converts a byte array to a hexadecimal string
-func ab2hex(data []byte) string {
-	return hex.EncodeToString(data)
-}
-
 // Generates a random byte array of the specified length
 func randomBytes(length int) ([]byte, error) {
 	bytes := make([]byte, length)
@@ -106,15 +110,15 @@ func randomInt(max int64) (int64, error) {
 
 // Hashes the input data using the specified algorithm and returns the hexadecimal representation of the hash
 func hashHex(algorithm Algorithm, data string) (string, error) {
-	hash, err := hash(algorithm, data)
+	hash, err := hash(algorithm, []byte(data))
 	if err != nil {
 		return "", err
 	}
-	return ab2hex(hash), nil
+	return hex.EncodeToString(hash), nil
 }
 
 // Hashes the input data using the specified algorithm
-func hash(algorithm Algorithm, data string) ([]byte, error) {
+func hash(algorithm Algorithm, data []byte) ([]byte, error) {
 	var hash []byte
 	switch algorithm {
 	case SHA1:
@@ -136,12 +140,12 @@ func hash(algorithm Algorithm, data string) ([]byte, error) {
 }
 
 // Computes the HMAC of the input data using the specified algorithm and key, and returns the hexadecimal representation
-func hmacHex(algorithm Algorithm, data, key string) (string, error) {
+func hmacHex(algorithm Algorithm, data []byte, key string) (string, error) {
 	h, err := hmacHash(algorithm, []byte(data), key)
 	if err != nil {
 		return "", err
 	}
-	return ab2hex(h), nil
+	return hex.EncodeToString(h), nil
 }
 
 // Computes the HMAC of the input data using the specified algorithm and key
@@ -191,7 +195,7 @@ func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 		if err != nil {
 			return Challenge{}, err
 		}
-		salt = ab2hex(randomSalt)
+		salt = hex.EncodeToString(randomSalt)
 	}
 	if len(params) > 0 {
 		salt = salt + "?" + params.Encode()
@@ -211,7 +215,7 @@ func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 		return Challenge{}, err
 	}
 
-	signature, err := hmacHex(algorithm, challenge, options.HMACKey)
+	signature, err := hmacHex(algorithm, []byte(challenge), options.HMACKey)
 	if err != nil {
 		return Challenge{}, err
 	}
@@ -226,8 +230,25 @@ func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 }
 
 // Verifies the solution provided by the client
-func VerifySolution(payload map[string]interface{}, hmacKey string, checkExpires bool) (bool, error) {
-	params := ExtractParams(payload)
+func VerifySolution(payload interface{}, hmacKey string, checkExpires bool) (bool, error) {
+	var parsedPayload Payload
+
+	// Parse payload
+	switch v := payload.(type) {
+	case string:
+		decoded, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			return false, err
+		}
+		err = json.Unmarshal(decoded, &parsedPayload)
+		if err != nil {
+			return false, err
+		}
+	default:
+		parsedPayload, _ = v.(Payload)
+	}
+
+	params := ExtractParams(parsedPayload)
 	expires := params.Get("expires")
 	if checkExpires && expires != "" {
 		expireTime, err := strconv.ParseInt(expires, 10, 64)
@@ -240,23 +261,22 @@ func VerifySolution(payload map[string]interface{}, hmacKey string, checkExpires
 	}
 
 	challengeOptions := ChallengeOptions{
-		Algorithm: Algorithm(payload["algorithm"].(string)),
+		Algorithm: Algorithm(parsedPayload.Algorithm),
 		HMACKey:   hmacKey,
-		Number:    int64(payload["number"].(int64)),
-		Salt:      payload["salt"].(string),
+		Number:    parsedPayload.Number,
+		Salt:      parsedPayload.Salt,
 	}
 	expectedChallenge, err := CreateChallenge(challengeOptions)
 	if err != nil {
 		return false, err
 	}
 
-	return expectedChallenge.Challenge == payload["challenge"].(string) && expectedChallenge.Signature == payload["signature"].(string), nil
+	return expectedChallenge.Challenge == parsedPayload.Challenge && expectedChallenge.Signature == parsedPayload.Signature, nil
 }
 
 // Extracts parameters from the payload
-func ExtractParams(payload map[string]interface{}) url.Values {
-	salt := payload["salt"].(string)
-	splitSalt := strings.Split(salt, "?")
+func ExtractParams(payload Payload) url.Values {
+	splitSalt := strings.Split(payload.Salt, "?")
 	if len(splitSalt) > 1 {
 		params, _ := url.ParseQuery(splitSalt[1])
 		return params
@@ -304,7 +324,11 @@ func VerifyServerSignature(payload interface{}, hmacKey string) (bool, ServerSig
 	}
 
 	// Calculate expected signature
-	expectedSignature, err := hmacHex(parsedPayload.Algorithm, parsedPayload.VerificationData, hmacKey)
+	hash, err := hash(parsedPayload.Algorithm, []byte(parsedPayload.VerificationData))
+	if err != nil {
+		return false, ServerSignatureVerificationData{}, err
+	}
+	expectedSignature, err := hmacHex(parsedPayload.Algorithm, hash, hmacKey)
 	if err != nil {
 		return false, ServerSignatureVerificationData{}, err
 	}

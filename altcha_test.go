@@ -50,12 +50,12 @@ func TestVerifySolution(t *testing.T) {
 		t.Fatalf("CreateChallenge() error = %v", err)
 	}
 
-	payload := map[string]interface{}{
-		"algorithm": challenge.Algorithm,
-		"challenge": challenge.Challenge,
-		"number":    int64(10),
-		"salt":      challenge.Salt,
-		"signature": challenge.Signature,
+	payload := Payload{
+		Algorithm: challenge.Algorithm,
+		Challenge: challenge.Challenge,
+		Number:    10,
+		Salt:      challenge.Salt,
+		Signature: challenge.Signature,
 	}
 
 	valid, err := VerifySolution(payload, "test-key", true)
@@ -68,8 +68,8 @@ func TestVerifySolution(t *testing.T) {
 }
 
 func TestExtractParams(t *testing.T) {
-	payload := map[string]interface{}{
-		"salt": "abc123?foo=bar&baz=qux",
+	payload := Payload{
+		Salt: "abc123?foo=bar&baz=qux",
 	}
 
 	expectedParams := url.Values{
@@ -107,7 +107,8 @@ func TestVerifyServerSignature(t *testing.T) {
 		verificationData := "expire=" + strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10) +
 			"&fields=field1,field2&reasons=reason1,reason2&score=3&time=" +
 			strconv.FormatInt(time.Now().Unix(), 10) + "&verified=true"
-		expectedSignature, err := hmacHex(SHA256, verificationData, "test-key")
+		hash, _ := hash(SHA256, []byte(verificationData))
+		expectedSignature, err := hmacHex(SHA256, hash, "test-key")
 		if err != nil {
 			t.Fatalf("hmacHex() error = %v", err)
 		}
@@ -156,7 +157,7 @@ func TestVerifyServerSignature(t *testing.T) {
 		verificationData := "expire=" + strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10) +
 			"&fields=field1,field2&reasons=reason1,reason2&score=3&time=" +
 			strconv.FormatInt(time.Now().Unix(), 10) + "&verified=true"
-		expectedSignature, err := hmacHex(SHA256, verificationData, "test-key")
+		expectedSignature, err := hmacHex(SHA256, []byte(verificationData), "test-key")
 		if err != nil {
 			t.Fatalf("hmacHex() error = %v", err)
 		}
