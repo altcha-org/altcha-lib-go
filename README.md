@@ -9,6 +9,10 @@ This library is compatible with:
 - Go 1.18+
 - All major platforms (Linux, Windows, macOS)
 
+## Example
+
+- [Demo server](https://github.com/altcha-org/altcha-starter-go)
+
 ## Installation
 
 To install the ALTCHA Go Library, use the following command:
