@@ -184,6 +184,10 @@ func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 	if saltLength == 0 {
 		saltLength = DefaultSaltLength
 	}
+	
+	if options.Params == nil {
+		options.Params = url.Values{}
+	}
 
 	params := options.Params
 	if options.Expires != nil {

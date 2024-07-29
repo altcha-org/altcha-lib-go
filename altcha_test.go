@@ -9,29 +9,57 @@ import (
 )
 
 func TestCreateChallenge(t *testing.T) {
-	expires := time.Now().Add(10 * time.Minute)
-	options := ChallengeOptions{
-		HMACKey:    "test-key",
-		SaltLength: 16,
-		Algorithm:  SHA256,
-		Expires:    &expires,
-		Params:     url.Values{"foo": {"bar"}},
-	}
+	t.Run("ChallengeWithParams", func(t *testing.T) {
+		expires := time.Now().Add(10 * time.Minute)
+		options := ChallengeOptions{
+			HMACKey:    "test-key",
+			SaltLength: 16,
+			Algorithm:  SHA256,
+			Expires:    &expires,
+			Params:     url.Values{"foo": {"bar"}},
+		}
 
-	challenge, err := CreateChallenge(options)
-	if err != nil {
-		t.Fatalf("CreateChallenge() error = %v", err)
-	}
+		challenge, err := CreateChallenge(options)
+		if err != nil {
+			t.Fatalf("CreateChallenge() error = %v", err)
+		}
 
-	if challenge.Algorithm != string(SHA256) {
-		t.Errorf("CreateChallenge() Algorithm = %v, want %v", challenge.Algorithm, SHA256)
-	}
-	if challenge.Salt == "" {
-		t.Error("CreateChallenge() Salt should not be empty")
-	}
-	if challenge.Signature == "" {
-		t.Error("CreateChallenge() Signature should not be empty")
-	}
+		if challenge.Algorithm != string(SHA256) {
+			t.Errorf("CreateChallenge() Algorithm = %v, want %v", challenge.Algorithm, SHA256)
+		}
+		if challenge.Salt == "" {
+			t.Error("CreateChallenge() Salt should not be empty")
+		}
+		if challenge.Signature == "" {
+			t.Error("CreateChallenge() Signature should not be empty")
+		}
+	})
+
+	// Challenge without params with possible null pointer panic
+	t.Run("ChallengeWithoutParams", func(t *testing.T) {
+		expires := time.Now().Add(10 * time.Minute)
+		options := ChallengeOptions{
+			HMACKey:    "test-key",
+			SaltLength: 16,
+			Algorithm:  SHA256,
+			Expires:    &expires,
+		}
+
+		challenge, err := CreateChallenge(options)
+		if err != nil {
+			t.Fatalf("CreateChallenge() error = %v", err)
+		}
+
+		if challenge.Algorithm != string(SHA256) {
+			t.Errorf("CreateChallenge() Algorithm = %v, want %v", challenge.Algorithm, SHA256)
+		}
+		if challenge.Salt == "" {
+			t.Error("CreateChallenge() Salt should not be empty")
+		}
+		if challenge.Signature == "" {
+			t.Error("CreateChallenge() Signature should not be empty")
+		}
+	})
 }
 
 func TestVerifySolution(t *testing.T) {
