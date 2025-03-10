@@ -51,12 +51,12 @@ func main() {
     fmt.Println("Challenge created:", challenge)
 
     // Example payload to verify
-    payload := map[string]interface{}{
-        "algorithm": challenge.Algorithm,
-        "challenge": challenge.Challenge,
-        "number":    12345, // Example number
-        "salt":      challenge.Salt,
-        "signature": challenge.Signature,
+    payload := altcha.Payload{
+        Algorithm: challenge.Algorithm,
+        Challenge: challenge.Challenge,
+        Number:    12345, // Example number
+        Salt:      challenge.Salt,
+        Signature: challenge.Signature,
     }
 
     // Verify the solution
