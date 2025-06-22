@@ -169,7 +169,7 @@ func TestVerifyServerSignature(t *testing.T) {
 	t.Run("ValidSignature", func(t *testing.T) {
 		verificationData := "expire=" + strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10) +
 			"&fields=field1,field2&reasons=reason1,reason2&score=3&time=" +
-			strconv.FormatInt(time.Now().Unix(), 10) + "&verified=true"
+			strconv.FormatInt(time.Now().Unix(), 10) + "&verified=true&abc=123"
 		hash, _ := hash(SHA256, []byte(verificationData))
 		expectedSignature, err := hmacHex(SHA256, hash, "test-key")
 		if err != nil {
@@ -191,6 +191,9 @@ func TestVerifyServerSignature(t *testing.T) {
 		}
 		if data.Expire <= 0 || len(data.Fields) == 0 || len(data.Reasons) == 0 || data.Score == 0 || data.Time <= 0 || !data.Verified {
 			t.Errorf("VerifyServerSignature() verificationData = %v, want correct data", data)
+		}
+		if data.Extra["abc"] != "123" {
+			t.Error("Wrong extra parameter value")
 		}
 	})
 

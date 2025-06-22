@@ -32,6 +32,21 @@ const (
 	DefaultAlgorithm        = SHA256
 )
 
+var knownFields = map[string]bool{
+	"classification":   true,
+	"country":          true,
+	"detectedLanguage": true,
+	"email":            true,
+	"expire":           true,
+	"fields":           true,
+	"fieldsHash":       true,
+	"ipAddress":        true,
+	"reasons":          true,
+	"score":            true,
+	"time":             true,
+	"verified":         true,
+}
+
 // ChallengeOptions defines the options for creating a challenge
 type ChallengeOptions struct {
 	Algorithm  Algorithm
@@ -84,6 +99,8 @@ type ServerSignatureVerificationData struct {
 	Score            float64  `json:"score"`
 	Time             int64    `json:"time"`
 	Verified         bool     `json:"verified"`
+
+	Extra map[string]interface{} `json:"-"`
 }
 
 // Solution holds the result of solving a challenge.
@@ -343,6 +360,7 @@ func VerifyServerSignature(payload interface{}, hmacKey string) (bool, ServerSig
 	var verificationData ServerSignatureVerificationData
 	params, err := url.ParseQuery(parsedPayload.VerificationData)
 	if err == nil {
+		verificationData.Extra = make(map[string]interface{})
 		verificationData.Classification = params.Get("classification")
 		verificationData.Country = params.Get("country")
 		verificationData.DetectedLanguage = params.Get("detectedLanguage")
@@ -353,6 +371,16 @@ func VerifyServerSignature(payload interface{}, hmacKey string) (bool, ServerSig
 		verificationData.Score, _ = strconv.ParseFloat(params.Get("score"), 64)
 		verificationData.Time, _ = strconv.ParseInt(params.Get("time"), 10, 64)
 		verificationData.Verified = params.Get("verified") == "true"
+	}
+
+	for key, values := range params {
+		if !knownFields[key] {
+			if len(values) == 1 {
+				verificationData.Extra[key] = values[0]
+			} else if len(values) > 1 {
+				verificationData.Extra[key] = values
+			}
+		}
 	}
 
 	// Verify the signature
