@@ -39,7 +39,7 @@ type ChallengeOptions struct {
 	SaltLength int
 	HMACKey    string
 	Salt       string
-	Number     int64
+	Number     *int64
 	Expires    *time.Time
 	Params     url.Values
 }
@@ -184,7 +184,7 @@ func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 	if saltLength == 0 {
 		saltLength = DefaultSaltLength
 	}
-	
+
 	if options.Params == nil {
 		options.Params = url.Values{}
 	}
@@ -205,13 +205,15 @@ func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 		salt = salt + "?" + params.Encode()
 	}
 
-	number := options.Number
-	if number == 0 {
+	var number int64
+	if options.Number == nil {
 		randomNumber, err := randomInt(maxNumber)
 		if err != nil {
 			return Challenge{}, err
 		}
 		number = randomNumber
+	} else {
+		number = *options.Number
 	}
 
 	challenge, err := hashHex(algorithm, salt+fmt.Sprint(number))
@@ -267,7 +269,7 @@ func VerifySolution(payload interface{}, hmacKey string, checkExpires bool) (boo
 	challengeOptions := ChallengeOptions{
 		Algorithm: Algorithm(parsedPayload.Algorithm),
 		HMACKey:   hmacKey,
-		Number:    parsedPayload.Number,
+		Number:    &parsedPayload.Number,
 		Salt:      parsedPayload.Salt,
 	}
 	expectedChallenge, err := CreateChallenge(challengeOptions)

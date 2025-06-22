@@ -50,11 +50,14 @@ func main() {
 
     fmt.Println("Challenge created:", challenge)
 
+    // Example number
+    var number int64 = 12345 
+
     // Example payload to verify
     payload := altcha.Payload{
         Algorithm: challenge.Algorithm,
         Challenge: challenge.Challenge,
-        Number:    12345, // Example number
+        Number:    &number,
         Salt:      challenge.Salt,
         Signature: challenge.Signature,
     }
@@ -87,7 +90,7 @@ Creates a new challenge for ALTCHA.
   - `SaltLength int`: Length of the random salt (default: 12 bytes).
   - `HMACKey string`: Required HMAC key.
   - `Salt string`: Optional salt string. If not provided, a random salt will be generated.
-  - `Number int64`: Optional specific number to use. If not provided, a random number will be generated.
+  - `Number *int64`: Optional specific number to use. If not provided, a random number will be generated.
   - `Expires *time.Time`: Optional expiration time for the challenge.
   - `Params url.Values`: Optional URL-encoded query parameters.
 
