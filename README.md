@@ -157,6 +157,17 @@ Finds a solution to the given challenge.
 
 **Returns:** `*Solution, error`
 
+## Cryptographically Safe Methods
+
+This library provides cryptographically safe variants of core methods using `subtle.ConstantTimeCompare` to prevent timing attacks [[#3](https://github.com/altcha-org/altcha-lib-go/issues/3)]. These methods perform two additional SHA-256 iterations.
+
+Available methods:
+
+* `VerifySolutionSafe`
+* `VerifyFieldsHashSafe`
+* `VerifyServerSignatureSafe`
+* `SolveChallengeSafe`
+
 ## License
 
 MIT

@@ -188,6 +188,153 @@ func hmacHash(algorithm Algorithm, data []byte, key string) ([]byte, error) {
 	return hash, nil
 }
 
+// Constant-time comparison for strings
+func secureCompare(a, b string) bool {
+	// Pre-hashing required because ConstantTimeCompare expects same length, otherwise you'll end up with a length leaking attack
+	// As per the docs "If the lengths of x and y do not match it returns 0 immediately. "
+	aHash := sha256.Sum256([]byte(a))
+	bHash := sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(aHash[:], bHash[:]) == 1
+}
+
+// Get Expected Challenge
+func getExpectedChallenge(hmacKey string, parsedPayload Payload) (Challenge, error) {
+	challengeOptions := ChallengeOptions{
+		Algorithm: Algorithm(parsedPayload.Algorithm),
+		HMACKey:   hmacKey,
+		Number:    &parsedPayload.Number,
+		Salt:      parsedPayload.Salt,
+	}
+	expectedChallenge, err := CreateChallenge(challengeOptions)
+	if err != nil {
+		return Challenge{}, err
+	}
+	return expectedChallenge, nil
+}
+
+// Parse Payload
+func parsePayload(payload interface{}, checkExpires bool) (Payload, error) {
+	var parsedPayload Payload
+
+	switch v := payload.(type) {
+	case string:
+		decoded, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			return Payload{}, err
+		}
+		err = json.Unmarshal(decoded, &parsedPayload)
+		if err != nil {
+			return Payload{}, err
+		}
+	default:
+		parsedPayload, _ = v.(Payload)
+	}
+
+	params := ExtractParams(parsedPayload)
+	expires := params.Get("expires")
+	if checkExpires && expires != "" {
+		expireTime, err := strconv.ParseInt(expires, 10, 64)
+		if err != nil {
+			return Payload{}, err
+		}
+		if time.Now().Unix() > expireTime {
+			return Payload{}, nil
+		}
+	}
+	return parsedPayload, nil
+}
+
+// Parse server signature payload and its verification data
+func parseServerSignature(payload interface{}) (ServerSignaturePayload, ServerSignatureVerificationData, error) {
+	var parsedPayload ServerSignaturePayload
+
+	// Parse payload
+	switch v := payload.(type) {
+	case string:
+		decoded, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			return ServerSignaturePayload{}, ServerSignatureVerificationData{}, err
+		}
+		err = json.Unmarshal(decoded, &parsedPayload)
+		if err != nil {
+			return ServerSignaturePayload{}, ServerSignatureVerificationData{}, err
+		}
+	default:
+		parsedPayload, _ = v.(ServerSignaturePayload)
+	}
+
+	// Extract verification data
+	var verificationData ServerSignatureVerificationData
+	params, err := url.ParseQuery(parsedPayload.VerificationData)
+	if err == nil {
+		verificationData.Extra = make(map[string]interface{})
+		verificationData.Classification = params.Get("classification")
+		verificationData.Country = params.Get("country")
+		verificationData.DetectedLanguage = params.Get("detectedLanguage")
+		verificationData.Email = params.Get("email")
+		verificationData.Expire, _ = strconv.ParseInt(params.Get("expire"), 10, 64)
+		verificationData.Fields = strings.Split(params.Get("fields"), ",")
+		verificationData.Reasons = strings.Split(params.Get("reasons"), ",")
+		verificationData.Score, _ = strconv.ParseFloat(params.Get("score"), 64)
+		verificationData.Time, _ = strconv.ParseInt(params.Get("time"), 10, 64)
+		verificationData.Verified = params.Get("verified") == "true"
+	}
+
+	for key, values := range params {
+		if !knownFields[key] {
+			if len(values) == 1 {
+				verificationData.Extra[key] = values[0]
+			} else if len(values) > 1 {
+				verificationData.Extra[key] = values
+			}
+		}
+	}
+	return parsedPayload, verificationData, nil
+}
+
+// Compute hash for VerifyFieldsHash
+func computeFieldsHash(formData map[string][]string, fields []string, algorithm Algorithm) (string, error) {
+	var lines []string
+	for _, field := range fields {
+		if value, exists := formData[field]; exists && len(value) > 0 {
+			lines = append(lines, value[0])
+		} else {
+			lines = append(lines, "")
+		}
+	}
+
+	joinedData := strings.Join(lines, "\n")
+	computedHash, err := hashHex(algorithm, joinedData)
+	if err != nil {
+		return "", err
+	}
+	return computedHash, nil
+}
+
+// Get default values for SolveChallenge function
+func getSolveChallengeDefaults(algorithm Algorithm, max int, start int) (Algorithm, int, int) {
+	if algorithm == "" {
+		algorithm = "SHA-256"
+	}
+	if max <= 0 {
+		max = 1000000
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	return algorithm, max, start
+}
+
+// Calculate expected signature
+func getExpectedServerSignature(payload ServerSignaturePayload, hmacKey string) (string, error) {
+	hash, err := hash(payload.Algorithm, []byte(payload.VerificationData))
+	if err != nil {
+		return "", err
+	}
+	return hmacHex(payload.Algorithm, hash, hmacKey)
+}
+
 // Creates a challenge for the client to solve
 func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 	algorithm := options.Algorithm
@@ -255,8 +402,7 @@ func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 
 // Verifies the solution provided by the client
 func VerifySolution(payload interface{}, hmacKey string, checkExpires bool) (bool, error) {
-
-	parsedPayload, err := parsePayload(payload, hmacKey, checkExpires)
+	parsedPayload, err := parsePayload(payload, checkExpires)
 	if err != nil {
 		return false, err
 	}
@@ -271,8 +417,7 @@ func VerifySolution(payload interface{}, hmacKey string, checkExpires bool) (boo
 
 // Verifies the solution provided by the client using constant-time comparison
 func VerifySolutionSafe(payload interface{}, hmacKey string, checkExpires bool) (bool, error) {
-
-	parsedPayload, err := parsePayload(payload, hmacKey, checkExpires)
+	parsedPayload, err := parsePayload(payload, checkExpires)
 	if err != nil {
 		return false, err
 	}
@@ -297,8 +442,7 @@ func ExtractParams(payload Payload) url.Values {
 
 // Verifies the hash of form fields
 func VerifyFieldsHash(formData map[string][]string, fields []string, fieldsHash string, algorithm Algorithm) (bool, error) {
-
-	computedHash, err := computeHash(formData, fields, fieldsHash, algorithm)
+	computedHash, err := computeFieldsHash(formData, fields, algorithm)
 	if err != nil {
 		return false, err
 	}
@@ -308,8 +452,7 @@ func VerifyFieldsHash(formData map[string][]string, fields []string, fieldsHash 
 
 // Verifies the hash of form fields using constant-time comparison
 func VerifyFieldsHashSafe(formData map[string][]string, fields []string, fieldsHash string, algorithm Algorithm) (bool, error) {
-
-	computedHash, err := computeHash(formData, fields, fieldsHash, algorithm)
+	computedHash, err := computeFieldsHash(formData, fields, algorithm)
 	if err != nil {
 		return false, err
 	}
@@ -319,60 +462,15 @@ func VerifyFieldsHashSafe(formData map[string][]string, fields []string, fieldsH
 
 // VerifyServerSignature verifies the server's signature
 func VerifyServerSignature(payload interface{}, hmacKey string) (bool, ServerSignatureVerificationData, error) {
-	var parsedPayload ServerSignaturePayload
-
-	// Parse payload
-	switch v := payload.(type) {
-	case string:
-		decoded, err := base64.StdEncoding.DecodeString(v)
-		if err != nil {
-			return false, ServerSignatureVerificationData{}, err
-		}
-		err = json.Unmarshal(decoded, &parsedPayload)
-		if err != nil {
-			return false, ServerSignatureVerificationData{}, err
-		}
-	default:
-		parsedPayload, _ = v.(ServerSignaturePayload)
+	parsedPayload, verificationData, err := parseServerSignature(payload)
+	if err != nil {
+		return false, verificationData, err
 	}
-
 	// Calculate expected signature
-	hash, err := hash(parsedPayload.Algorithm, []byte(parsedPayload.VerificationData))
+	expectedSignature, err := getExpectedServerSignature(parsedPayload, hmacKey)
 	if err != nil {
 		return false, ServerSignatureVerificationData{}, err
 	}
-	expectedSignature, err := hmacHex(parsedPayload.Algorithm, hash, hmacKey)
-	if err != nil {
-		return false, ServerSignatureVerificationData{}, err
-	}
-
-	// Extract verification data
-	var verificationData ServerSignatureVerificationData
-	params, err := url.ParseQuery(parsedPayload.VerificationData)
-	if err == nil {
-		verificationData.Extra = make(map[string]interface{})
-		verificationData.Classification = params.Get("classification")
-		verificationData.Country = params.Get("country")
-		verificationData.DetectedLanguage = params.Get("detectedLanguage")
-		verificationData.Email = params.Get("email")
-		verificationData.Expire, _ = strconv.ParseInt(params.Get("expire"), 10, 64)
-		verificationData.Fields = strings.Split(params.Get("fields"), ",")
-		verificationData.Reasons = strings.Split(params.Get("reasons"), ",")
-		verificationData.Score, _ = strconv.ParseFloat(params.Get("score"), 64)
-		verificationData.Time, _ = strconv.ParseInt(params.Get("time"), 10, 64)
-		verificationData.Verified = params.Get("verified") == "true"
-	}
-
-	for key, values := range params {
-		if !knownFields[key] {
-			if len(values) == 1 {
-				verificationData.Extra[key] = values[0]
-			} else if len(values) > 1 {
-				verificationData.Extra[key] = values
-			}
-		}
-	}
-
 	// Verify the signature
 	now := time.Now().Unix()
 	isVerified := parsedPayload.Verified &&
@@ -383,18 +481,30 @@ func VerifyServerSignature(payload interface{}, hmacKey string) (bool, ServerSig
 	return isVerified, verificationData, nil
 }
 
+// VerifyServerSignature verifies the server's signature using constant-time comparison
+func VerifyServerSignatureSafe(payload interface{}, hmacKey string) (bool, ServerSignatureVerificationData, error) {
+	parsedPayload, verificationData, err := parseServerSignature(payload)
+	if err != nil {
+		return false, verificationData, err
+	}
+	// Calculate expected signature
+	expectedSignature, err := getExpectedServerSignature(parsedPayload, hmacKey)
+	if err != nil {
+		return false, ServerSignatureVerificationData{}, err
+	}
+	// Verify the signature
+	now := time.Now().Unix()
+	isVerified := parsedPayload.Verified &&
+		verificationData.Verified &&
+		verificationData.Expire > now &&
+		secureCompare(parsedPayload.Signature, expectedSignature)
+
+	return isVerified, verificationData, nil
+}
+
 // SolveChallenge solves a challenge
 func SolveChallenge(challenge string, salt string, algorithm Algorithm, max int, start int, stopChan <-chan struct{}) (*Solution, error) {
-	if algorithm == "" {
-		algorithm = "SHA-256"
-	}
-	if max <= 0 {
-		max = 1000000
-	}
-	if start < 0 {
-		start = 0
-	}
-
+	algorithm, max, start = getSolveChallengeDefaults(algorithm, max, start)
 	startTime := time.Now()
 
 	for n := start; n <= max; n++ {
@@ -423,15 +533,7 @@ func SolveChallenge(challenge string, salt string, algorithm Algorithm, max int,
 
 // SolveChallenge solves a challenge using constant-time comparison
 func SolveChallengeSafe(challenge string, salt string, algorithm Algorithm, max int, start int, stopChan <-chan struct{}) (*Solution, error) {
-	if algorithm == "" {
-		algorithm = "SHA-256"
-	}
-	if max <= 0 {
-		max = 1000000
-	}
-	if start < 0 {
-		start = 0
-	}
+	algorithm, max, start = getSolveChallengeDefaults(algorithm, max, start)
 
 	startTime := time.Now()
 
@@ -457,79 +559,4 @@ func SolveChallengeSafe(challenge string, salt string, algorithm Algorithm, max 
 	}
 
 	return nil, nil
-}
-
-// Constant-time comparison for strings
-func secureCompare(a, b string) bool {
-	// Pre-hashing required because ConstantTimeCompare expects same length, otherwise you'll end up with a length leaking attack
-	// As per the docs "If the lengths of x and y do not match it returns 0 immediately. "
-	aHash := sha256.Sum256([]byte(a))
-	bHash := sha256.Sum256([]byte(b))
-	return subtle.ConstantTimeCompare(aHash[:], bHash[:]) == 1
-}
-
-// Get Expected Challenge
-func getExpectedChallenge(hmacKey string, parsedPayload Payload) (Challenge, error) {
-	challengeOptions := ChallengeOptions{
-		Algorithm: Algorithm(parsedPayload.Algorithm),
-		HMACKey:   hmacKey,
-		Number:    &parsedPayload.Number,
-		Salt:      parsedPayload.Salt,
-	}
-	expectedChallenge, err := CreateChallenge(challengeOptions)
-	if err != nil {
-		return Challenge{}, err
-	}
-	return expectedChallenge, nil
-}
-
-// Parse Payload
-func parsePayload(payload interface{}, hmacKey string, checkExpires bool) (Payload, error) {
-	var parsedPayload Payload
-
-	switch v := payload.(type) {
-	case string:
-		decoded, err := base64.StdEncoding.DecodeString(v)
-		if err != nil {
-			return Payload{}, err
-		}
-		err = json.Unmarshal(decoded, &parsedPayload)
-		if err != nil {
-			return Payload{}, err
-		}
-	default:
-		parsedPayload, _ = v.(Payload)
-	}
-
-	params := ExtractParams(parsedPayload)
-	expires := params.Get("expires")
-	if checkExpires && expires != "" {
-		expireTime, err := strconv.ParseInt(expires, 10, 64)
-		if err != nil {
-			return Payload{}, err
-		}
-		if time.Now().Unix() > expireTime {
-			return Payload{}, nil
-		}
-	}
-	return parsedPayload, nil
-}
-
-// Compute hash for VerifyFieldsHash
-func computeHash(formData map[string][]string, fields []string, fieldsHash string, algorithm Algorithm) (string, error) {
-	var lines []string
-	for _, field := range fields {
-		if value, exists := formData[field]; exists && len(value) > 0 {
-			lines = append(lines, value[0])
-		} else {
-			lines = append(lines, "")
-		}
-	}
-
-	joinedData := strings.Join(lines, "\n")
-	computedHash, err := hashHex(algorithm, joinedData)
-	if err != nil {
-		return "", err
-	}
-	return computedHash, nil
 }
