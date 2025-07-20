@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -254,47 +255,34 @@ func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 
 // Verifies the solution provided by the client
 func VerifySolution(payload interface{}, hmacKey string, checkExpires bool) (bool, error) {
-	var parsedPayload Payload
 
-	// Parse payload
-	switch v := payload.(type) {
-	case string:
-		decoded, err := base64.StdEncoding.DecodeString(v)
-		if err != nil {
-			return false, err
-		}
-		err = json.Unmarshal(decoded, &parsedPayload)
-		if err != nil {
-			return false, err
-		}
-	default:
-		parsedPayload, _ = v.(Payload)
+	parsedPayload, err := parsePayload(payload, hmacKey, checkExpires)
+	if err != nil {
+		return false, err
 	}
 
-	params := ExtractParams(parsedPayload)
-	expires := params.Get("expires")
-	if checkExpires && expires != "" {
-		expireTime, err := strconv.ParseInt(expires, 10, 64)
-		if err != nil {
-			return false, err
-		}
-		if time.Now().Unix() > expireTime {
-			return false, nil
-		}
-	}
-
-	challengeOptions := ChallengeOptions{
-		Algorithm: Algorithm(parsedPayload.Algorithm),
-		HMACKey:   hmacKey,
-		Number:    &parsedPayload.Number,
-		Salt:      parsedPayload.Salt,
-	}
-	expectedChallenge, err := CreateChallenge(challengeOptions)
+	expectedChallenge, err := getExpectedChallenge(hmacKey, parsedPayload)
 	if err != nil {
 		return false, err
 	}
 
 	return expectedChallenge.Challenge == parsedPayload.Challenge && expectedChallenge.Signature == parsedPayload.Signature, nil
+}
+
+// Verifies the solution provided by the client using constant-time comparison
+func VerifySolutionSafe(payload interface{}, hmacKey string, checkExpires bool) (bool, error) {
+
+	parsedPayload, err := parsePayload(payload, hmacKey, checkExpires)
+	if err != nil {
+		return false, err
+	}
+
+	expectedChallenge, err := getExpectedChallenge(hmacKey, parsedPayload)
+	if err != nil {
+		return false, err
+	}
+
+	return secureCompare(expectedChallenge.Challenge, parsedPayload.Challenge) && secureCompare(expectedChallenge.Signature, parsedPayload.Signature), nil
 }
 
 // Extracts parameters from the payload
@@ -309,22 +297,24 @@ func ExtractParams(payload Payload) url.Values {
 
 // Verifies the hash of form fields
 func VerifyFieldsHash(formData map[string][]string, fields []string, fieldsHash string, algorithm Algorithm) (bool, error) {
-	var lines []string
-	for _, field := range fields {
-		if value, exists := formData[field]; exists && len(value) > 0 {
-			lines = append(lines, value[0])
-		} else {
-			lines = append(lines, "")
-		}
-	}
 
-	joinedData := strings.Join(lines, "\n")
-	computedHash, err := hashHex(algorithm, joinedData)
+	computedHash, err := computeHash(formData, fields, fieldsHash, algorithm)
 	if err != nil {
 		return false, err
 	}
 
 	return computedHash == fieldsHash, nil
+}
+
+// Verifies the hash of form fields using constant-time comparison
+func VerifyFieldsHashSafe(formData map[string][]string, fields []string, fieldsHash string, algorithm Algorithm) (bool, error) {
+
+	computedHash, err := computeHash(formData, fields, fieldsHash, algorithm)
+	if err != nil {
+		return false, err
+	}
+
+	return secureCompare(computedHash, fieldsHash), nil
 }
 
 // VerifyServerSignature verifies the server's signature
@@ -429,4 +419,117 @@ func SolveChallenge(challenge string, salt string, algorithm Algorithm, max int,
 	}
 
 	return nil, nil
+}
+
+// SolveChallenge solves a challenge using constant-time comparison
+func SolveChallengeSafe(challenge string, salt string, algorithm Algorithm, max int, start int, stopChan <-chan struct{}) (*Solution, error) {
+	if algorithm == "" {
+		algorithm = "SHA-256"
+	}
+	if max <= 0 {
+		max = 1000000
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	startTime := time.Now()
+
+	for n := start; n <= max; n++ {
+		select {
+		case <-stopChan:
+			// Stop the process if the stop signal is received.
+			return nil, nil
+		default:
+			// Continue the process.
+		}
+
+		hash, err := hashHex(algorithm, salt+fmt.Sprint(n))
+		if err != nil {
+			return nil, err
+		}
+		if secureCompare(hash, challenge) {
+			return &Solution{
+				Number: n,
+				Took:   time.Since(startTime),
+			}, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// Constant-time comparison for strings
+func secureCompare(a, b string) bool {
+	// Pre-hashing required because ConstantTimeCompare expects same length, otherwise you'll end up with a length leaking attack
+	// As per the docs "If the lengths of x and y do not match it returns 0 immediately. "
+	aHash := sha256.Sum256([]byte(a))
+	bHash := sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(aHash[:], bHash[:]) == 1
+}
+
+// Get Expected Challenge
+func getExpectedChallenge(hmacKey string, parsedPayload Payload) (Challenge, error) {
+	challengeOptions := ChallengeOptions{
+		Algorithm: Algorithm(parsedPayload.Algorithm),
+		HMACKey:   hmacKey,
+		Number:    &parsedPayload.Number,
+		Salt:      parsedPayload.Salt,
+	}
+	expectedChallenge, err := CreateChallenge(challengeOptions)
+	if err != nil {
+		return Challenge{}, err
+	}
+	return expectedChallenge, nil
+}
+
+// Parse Payload
+func parsePayload(payload interface{}, hmacKey string, checkExpires bool) (Payload, error) {
+	var parsedPayload Payload
+
+	switch v := payload.(type) {
+	case string:
+		decoded, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			return Payload{}, err
+		}
+		err = json.Unmarshal(decoded, &parsedPayload)
+		if err != nil {
+			return Payload{}, err
+		}
+	default:
+		parsedPayload, _ = v.(Payload)
+	}
+
+	params := ExtractParams(parsedPayload)
+	expires := params.Get("expires")
+	if checkExpires && expires != "" {
+		expireTime, err := strconv.ParseInt(expires, 10, 64)
+		if err != nil {
+			return Payload{}, err
+		}
+		if time.Now().Unix() > expireTime {
+			return Payload{}, nil
+		}
+	}
+	return parsedPayload, nil
+}
+
+// Compute hash for VerifyFieldsHash
+func computeHash(formData map[string][]string, fields []string, fieldsHash string, algorithm Algorithm) (string, error) {
+	var lines []string
+	for _, field := range fields {
+		if value, exists := formData[field]; exists && len(value) > 0 {
+			lines = append(lines, value[0])
+		} else {
+			lines = append(lines, "")
+		}
+	}
+
+	joinedData := strings.Join(lines, "\n")
+	computedHash, err := hashHex(algorithm, joinedData)
+	if err != nil {
+		return "", err
+	}
+	return computedHash, nil
 }
