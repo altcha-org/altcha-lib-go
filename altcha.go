@@ -226,8 +226,24 @@ func parsePayload(payload interface{}, checkExpires bool) (Payload, error) {
 		if err != nil {
 			return Payload{}, err
 		}
+	case Payload:
+		parsedPayload = v
+	case []byte:
+		err := json.Unmarshal(v, &parsedPayload)
+		if err != nil {
+			return Payload{}, err
+		}
+	case map[string]interface{}:
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			return Payload{}, err
+		}
+		err = json.Unmarshal(jsonBytes, &parsedPayload)
+		if err != nil {
+			return Payload{}, err
+		}
 	default:
-		parsedPayload, _ = v.(Payload)
+		return Payload{}, fmt.Errorf("unsupported payload type: %T", v)
 	}
 
 	params := ExtractParams(parsedPayload)

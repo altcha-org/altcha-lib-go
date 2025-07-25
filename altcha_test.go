@@ -185,6 +185,40 @@ func TestVerifySolutionWithZero(t *testing.T) {
 	}
 }
 
+func TestVerifySolutionWithMap(t *testing.T) {
+	expires := time.Now().Add(10 * time.Minute)
+	var number int64 = 10
+	options := ChallengeOptions{
+		HMACKey:    "test-key",
+		SaltLength: 16,
+		Algorithm:  SHA256,
+		Expires:    &expires,
+		Number:     &number,
+		Params:     url.Values{"foo": {"bar"}},
+	}
+
+	challenge, err := CreateChallenge(options)
+	if err != nil {
+		t.Fatalf("CreateChallenge() error = %v", err)
+	}
+
+	payload := map[string]interface{}{
+		"algorithm": challenge.Algorithm,
+		"challenge": challenge.Challenge,
+		"number":    10,
+		"salt":      challenge.Salt,
+		"signature": challenge.Signature,
+	}
+
+	valid, err := VerifySolution(payload, "test-key", true)
+	if err != nil {
+		t.Fatalf("VerifySolution() error = %v", err)
+	}
+	if !valid {
+		t.Error("VerifySolution() should return true for valid solution")
+	}
+}
+
 func TestVerifySolutionSafe(t *testing.T) {
 	expires := time.Now().Add(10 * time.Minute)
 	var number int64 = 10
