@@ -253,6 +253,40 @@ func TestVerifySolutionSafe(t *testing.T) {
 	}
 }
 
+func TestVerifySolutionSaltSplicing(t *testing.T) {
+	expires := time.Now().Add(10 * time.Minute)
+	var num int64 = 123
+	options := ChallengeOptions{
+		HMACKey:    "test-key",
+		SaltLength: 16,
+		Algorithm:  SHA256,
+		Expires:    &expires,
+		Number:     &num,
+		Params:     url.Values{"foo": {"bar"}},
+	}
+
+	challenge, err := CreateChallenge(options)
+	if err != nil {
+		t.Fatalf("CreateChallenge() error = %v", err)
+	}
+
+	payload := Payload{
+		Algorithm: challenge.Algorithm,
+		Challenge: challenge.Challenge,
+		Number:    23,
+		Salt:      challenge.Salt + "1",
+		Signature: challenge.Signature,
+	}
+
+	valid, err := VerifySolution(payload, "test-key", true)
+	if err != nil {
+		t.Fatalf("VerifySolution() error = %v", err)
+	}
+	if valid {
+		t.Error("VerifySolution() should return false for invalid spliced solution")
+	}
+}
+
 func TestExtractParams(t *testing.T) {
 	payload := Payload{
 		Salt: "abc123?foo=bar&baz=qux",

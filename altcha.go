@@ -386,6 +386,11 @@ func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 		salt = salt + "?" + params.Encode()
 	}
 
+	// Add a delimiter to prevent parameter splicing
+	if !strings.HasSuffix(salt, "&") {
+		salt += "&"
+	}
+
 	var number int64
 	if options.Number == nil {
 		randomNumber, err := randomInt(maxNumber)
