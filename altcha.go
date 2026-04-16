@@ -54,9 +54,9 @@ type ChallengeParameters struct {
 
 // Solution holds the result of solving a v2 challenge.
 type Solution struct {
-	Counter    int    `json:"counter"`
-	DerivedKey string `json:"derivedKey"`
-	Time       int64  `json:"time,omitempty"`
+	Counter    int     `json:"counter"`
+	DerivedKey string  `json:"derivedKey"`
+	Time       float64 `json:"time,omitempty"`
 }
 
 // Payload combines a challenge and its solution for transport.
@@ -433,7 +433,7 @@ func SolveChallenge(options SolveChallengeOptions) (*Solution, error) {
 			return &Solution{
 				Counter:    n,
 				DerivedKey: hex.EncodeToString(derivedKey),
-				Time:       elapsed,
+				Time:       float64(elapsed),
 			}, nil
 		}
 	}
