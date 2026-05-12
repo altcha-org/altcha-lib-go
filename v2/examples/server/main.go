@@ -7,7 +7,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 
-	altcha "github.com/altcha-org/altcha-lib-go"
+	altcha "github.com/altcha-org/altcha-lib-go/v2"
 )
 
 func main() {

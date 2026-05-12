@@ -1,442 +1,340 @@
 package altcha
 
 import (
-	"encoding/hex"
+	"net/url"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
 )
 
-func TestCreateChallengeV2(t *testing.T) {
-	t.Run("DefaultOptions", func(t *testing.T) {
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:           "PBKDF2/SHA-256",
-			HMACSignatureSecret: "test-secret",
-			Cost:                1000,
-		})
-		if err != nil {
-			t.Fatalf("CreateChallenge() error = %v", err)
-		}
-		if challenge.Parameters.Algorithm != "PBKDF2/SHA-256" {
-			t.Errorf("expected algorithm PBKDF2/SHA-256, got %s", challenge.Parameters.Algorithm)
-		}
-		if challenge.Parameters.KeyLength != defaultKeyLength {
-			t.Errorf("expected keyLength %d, got %d", defaultKeyLength, challenge.Parameters.KeyLength)
-		}
-		if challenge.Parameters.Nonce == "" {
-			t.Error("nonce should not be empty")
-		}
-		if challenge.Parameters.Salt == "" {
-			t.Error("salt should not be empty")
-		}
-		if challenge.Parameters.KeyPrefix == "" {
-			t.Error("keyPrefix should not be empty")
-		}
-		if challenge.Signature == "" {
-			t.Error("signature should not be empty")
-		}
-	})
+var solveChallengeTests = []struct {
+	name        string
+	challenge   string
+	salt        string
+	algorithm   string
+	max         int
+	start       int
+	expected    *Solution
+	expectError bool
+}{
+	{
+		name:      "successful solution with SHA-256",
+		challenge: "c2fc6c6adf8ba0f575a35f48df52c0968a3dcd3c577c2769dc2f1035943b975e", // Example hash for "salt123"
+		salt:      "salt",
+		algorithm: "SHA-256",
+		max:       100000,
+		start:     0,
+		expected: &Solution{
+			Number: 123,
+			Took:   0, // Time will vary, so this is not strictly tested
+		},
+		expectError: false,
+	},
+	{
+		name:        "unsuccessful solution",
+		challenge:   "invalidhash",
+		salt:        "salt",
+		algorithm:   "SHA-256",
+		max:         1000,
+		start:       0,
+		expected:    nil,
+		expectError: false,
+	},
+	{
+		name:        "unsupported algorithm",
+		challenge:   "c2fc6c6adf8ba0f575a35f48df52c0968a3dcd3c577c2769dc2f1035943b975e",
+		salt:        "salt",
+		algorithm:   "SHA-999", // Unsupported algorithm
+		max:         100000,
+		start:       0,
+		expected:    nil,
+		expectError: true,
+	},
+	{
+		name:        "cancellation test",
+		challenge:   "751a512dc299d1193434e6d7065f64d90e5bef33ab45ab841fb7231ecef3fa5a", // Example hash for "salt1234567"
+		salt:        "salt",
+		algorithm:   "SHA-256",
+		max:         100000,
+		start:       0,
+		expected:    nil,
+		expectError: false,
+	},
+}
 
-	t.Run("WithDeterministicCounter", func(t *testing.T) {
-		counter := 42
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:           "PBKDF2/SHA-256",
-			HMACSignatureSecret: "test-secret",
-			Counter:             &counter,
-			DeriveKey:           DeriveKeyPBKDF2(),
-			Cost:                1000,
-		})
-		if err != nil {
-			t.Fatalf("CreateChallenge() error = %v", err)
-		}
-		// With a deterministic counter, the keyPrefix should be set to the full derived key
-		if challenge.Parameters.KeyPrefix == "" {
-			t.Error("keyPrefix should be set when using deterministic counter")
-		}
-	})
-
-	t.Run("WithExpiresAt", func(t *testing.T) {
+func TestCreateChallenge(t *testing.T) {
+	t.Run("ChallengeWithParams", func(t *testing.T) {
 		expires := time.Now().Add(10 * time.Minute)
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:           "PBKDF2/SHA-256",
-			HMACSignatureSecret: "test-secret",
-			ExpiresAt:           &expires,
-			Cost:                1000,
-		})
-		if err != nil {
-			t.Fatalf("CreateChallenge() error = %v", err)
+		options := ChallengeOptions{
+			HMACKey:    "test-key",
+			SaltLength: 16,
+			Algorithm:  SHA256,
+			Expires:    &expires,
+			Params:     url.Values{"foo": {"bar"}},
 		}
-		if challenge.Parameters.ExpiresAt != expires.Unix() {
-			t.Errorf("expected expiresAt %d, got %d", expires.Unix(), challenge.Parameters.ExpiresAt)
-		}
-	})
 
-	t.Run("WithKeySignature", func(t *testing.T) {
-		counter := 5
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:              "PBKDF2/SHA-256",
-			HMACSignatureSecret:    "test-secret",
-			HMACKeySignatureSecret: "key-secret",
-			Counter:                &counter,
-			DeriveKey:              DeriveKeyPBKDF2(),
-			Cost:                   1000,
-			KeyLength:              16,
-		})
+		challenge, err := CreateChallenge(options)
 		if err != nil {
 			t.Fatalf("CreateChallenge() error = %v", err)
 		}
-		if challenge.Parameters.KeySignature == "" {
-			t.Error("keySignature should not be empty when counter and DeriveKey are provided")
+
+		if challenge.Algorithm != string(SHA256) {
+			t.Errorf("CreateChallenge() Algorithm = %v, want %v", challenge.Algorithm, SHA256)
+		}
+		if challenge.Salt == "" {
+			t.Error("CreateChallenge() Salt should not be empty")
 		}
 		if challenge.Signature == "" {
-			t.Error("signature should not be empty")
+			t.Error("CreateChallenge() Signature should not be empty")
 		}
 	})
 
-	t.Run("WithData", func(t *testing.T) {
-		data := map[string]interface{}{"foo": "bar", "count": float64(42)}
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:           "PBKDF2/SHA-256",
-			HMACSignatureSecret: "test-secret",
-			Data:                data,
-			Cost:                1000,
-		})
+	t.Run("ChallengeWithoutParams", func(t *testing.T) {
+		expires := time.Now().Add(10 * time.Minute)
+		options := ChallengeOptions{
+			HMACKey:    "test-key",
+			SaltLength: 16,
+			Algorithm:  SHA256,
+			Expires:    &expires,
+		}
+
+		challenge, err := CreateChallenge(options)
 		if err != nil {
 			t.Fatalf("CreateChallenge() error = %v", err)
 		}
-		if challenge.Parameters.Data["foo"] != "bar" {
-			t.Error("data should contain foo=bar")
+
+		if challenge.Algorithm != string(SHA256) {
+			t.Errorf("CreateChallenge() Algorithm = %v, want %v", challenge.Algorithm, SHA256)
+		}
+		if challenge.Salt == "" {
+			t.Error("CreateChallenge() Salt should not be empty")
+		}
+		if challenge.Signature == "" {
+			t.Error("CreateChallenge() Signature should not be empty")
 		}
 	})
 }
 
-func TestSolveChallengeV2(t *testing.T) {
-	t.Run("RoundTripPBKDF2", func(t *testing.T) {
-		deriveKey := DeriveKeyPBKDF2()
-		counter := 5
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:           "PBKDF2/SHA-256",
-			HMACSignatureSecret: "test-secret",
-			Counter:             &counter,
-			DeriveKey:           deriveKey,
-			Cost:                1000,
-			KeyLength:           16,
-		})
-		if err != nil {
-			t.Fatalf("CreateChallenge() error = %v", err)
-		}
-
-		solution, err := SolveChallenge(SolveChallengeOptions{
-			Challenge: challenge,
-			DeriveKey: deriveKey,
-		})
-		if err != nil {
-			t.Fatalf("SolveChallenge() error = %v", err)
-		}
-		if solution == nil {
-			t.Fatal("SolveChallenge() returned nil solution")
-		}
-		if solution.Counter != counter {
-			t.Errorf("expected counter %d, got %d", counter, solution.Counter)
-		}
-		if solution.DerivedKey == "" {
-			t.Error("derivedKey should not be empty")
-		}
-
-		// Verify the solution
-		result, err := VerifySolution(VerifySolutionOptions{
-			Challenge:           challenge,
-			Solution:            *solution,
-			DeriveKey:           deriveKey,
-			HMACSignatureSecret: "test-secret",
-		})
-		if err != nil {
-			t.Fatalf("VerifySolution() error = %v", err)
-		}
-		if !result.Verified {
-			t.Error("VerifySolution() should return verified=true")
-		}
-		if result.InvalidSignature != nil && *result.InvalidSignature {
-			t.Error("signature should be valid")
-		}
-		if result.InvalidSolution != nil && *result.InvalidSolution {
-			t.Error("solution should be valid")
-		}
-	})
-
-	t.Run("WithCancellation", func(t *testing.T) {
-		deriveKey := DeriveKeyPBKDF2()
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm: "PBKDF2/SHA-256",
-			Cost:      1000,
-			KeyLength: 16,
-			KeyPrefix: "ffffffffffffffff", // very unlikely prefix
-		})
-		if err != nil {
-			t.Fatalf("CreateChallenge() error = %v", err)
-		}
-
-		stopChan := make(chan struct{})
-		go func() {
-			time.Sleep(50 * time.Millisecond)
-			close(stopChan)
-		}()
-
-		solution, err := SolveChallenge(SolveChallengeOptions{
-			Challenge: challenge,
-			DeriveKey: deriveKey,
-			StopChan:  stopChan,
-		})
-		if err != nil {
-			t.Fatalf("SolveChallenge() error = %v", err)
-		}
-		if solution != nil {
-			t.Error("SolveChallenge() should return nil when cancelled")
-		}
-	})
-}
-
-func TestVerifySolutionV2(t *testing.T) {
-	t.Run("ExpiredChallenge", func(t *testing.T) {
-		expired := time.Now().Add(-10 * time.Minute)
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:           "PBKDF2/SHA-256",
-			HMACSignatureSecret: "test-secret",
-			ExpiresAt:           &expired,
-			Cost:                1000,
-		})
-		if err != nil {
-			t.Fatalf("CreateChallenge() error = %v", err)
-		}
-
-		result, err := VerifySolution(VerifySolutionOptions{
-			Challenge:           challenge,
-			Solution:            Solution{Counter: 0, DerivedKey: "abc"},
-			HMACSignatureSecret: "test-secret",
-			DeriveKey:           DeriveKeyPBKDF2(),
-		})
-		if err != nil {
-			t.Fatalf("VerifySolution() error = %v", err)
-		}
-		if !result.Expired {
-			t.Error("expected expired=true")
-		}
-		if result.Verified {
-			t.Error("expired challenge should not be verified")
-		}
-	})
-
-	t.Run("InvalidSignature", func(t *testing.T) {
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:           "PBKDF2/SHA-256",
-			HMACSignatureSecret: "test-secret",
-			Cost:                1000,
-		})
-		if err != nil {
-			t.Fatalf("CreateChallenge() error = %v", err)
-		}
-
-		// Tamper with the signature
-		challenge.Signature = "invalid"
-
-		result, err := VerifySolution(VerifySolutionOptions{
-			Challenge:           challenge,
-			Solution:            Solution{Counter: 0, DerivedKey: "abc"},
-			HMACSignatureSecret: "test-secret",
-			DeriveKey:           DeriveKeyPBKDF2(),
-		})
-		if err != nil {
-			t.Fatalf("VerifySolution() error = %v", err)
-		}
-		if result.Verified {
-			t.Error("tampered signature should not verify")
-		}
-		if result.InvalidSignature == nil || !*result.InvalidSignature {
-			t.Error("expected invalidSignature=true")
-		}
-	})
-
-	t.Run("InvalidSolution", func(t *testing.T) {
-		deriveKey := DeriveKeyPBKDF2()
-		counter := 5
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:           "PBKDF2/SHA-256",
-			HMACSignatureSecret: "test-secret",
-			Counter:             &counter,
-			DeriveKey:           deriveKey,
-			Cost:                1000,
-			KeyLength:           16,
-		})
-		if err != nil {
-			t.Fatalf("CreateChallenge() error = %v", err)
-		}
-
-		// Provide wrong solution
-		result, err := VerifySolution(VerifySolutionOptions{
-			Challenge:           challenge,
-			Solution:            Solution{Counter: 999, DerivedKey: "0000"},
-			DeriveKey:           deriveKey,
-			HMACSignatureSecret: "test-secret",
-		})
-		if err != nil {
-			t.Fatalf("VerifySolution() error = %v", err)
-		}
-		if result.Verified {
-			t.Error("wrong solution should not verify")
-		}
-		if result.InvalidSolution == nil || !*result.InvalidSolution {
-			t.Error("expected invalidSolution=true")
-		}
-	})
-
-	t.Run("KeySignatureFastPath", func(t *testing.T) {
-		deriveKey := DeriveKeyPBKDF2()
-		counter := 5
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:              "PBKDF2/SHA-256",
-			HMACSignatureSecret:    "test-secret",
-			HMACKeySignatureSecret: "key-secret",
-			Counter:                &counter,
-			DeriveKey:              deriveKey,
-			Cost:                   1000,
-			KeyLength:              16,
-		})
-		if err != nil {
-			t.Fatalf("CreateChallenge() error = %v", err)
-		}
-		if challenge.Parameters.KeySignature == "" {
-			t.Fatal("keySignature should be set")
-		}
-
-		solution, err := SolveChallenge(SolveChallengeOptions{
-			Challenge: challenge,
-			DeriveKey: deriveKey,
-		})
-		if err != nil {
-			t.Fatalf("SolveChallenge() error = %v", err)
-		}
-		if solution == nil {
-			t.Fatal("SolveChallenge() returned nil")
-		}
-
-		result, err := VerifySolution(VerifySolutionOptions{
-			Challenge:              challenge,
-			Solution:               *solution,
-			HMACSignatureSecret:    "test-secret",
-			HMACKeySignatureSecret: "key-secret",
-		})
-		if err != nil {
-			t.Fatalf("VerifySolution() error = %v", err)
-		}
-		if !result.Verified {
-			t.Error("key signature fast path should verify")
-		}
-		if result.InvalidSolution != nil && *result.InvalidSolution {
-			t.Error("solution should be valid")
-		}
-	})
-
-	t.Run("SignatureOnlyVerification", func(t *testing.T) {
-		challenge, err := CreateChallenge(CreateChallengeOptions{
-			Algorithm:           "PBKDF2/SHA-256",
-			HMACSignatureSecret: "test-secret",
-			Cost:                1000,
-		})
-		if err != nil {
-			t.Fatalf("CreateChallenge() error = %v", err)
-		}
-
-		// Verify with signature only, no DeriveKey
-		result, err := VerifySolution(VerifySolutionOptions{
-			Challenge:           challenge,
-			Solution:            Solution{},
-			HMACSignatureSecret: "test-secret",
-		})
-		if err != nil {
-			t.Fatalf("VerifySolution() error = %v", err)
-		}
-		if !result.Verified {
-			t.Error("signature-only verification should pass")
-		}
-		if result.InvalidSolution != nil {
-			t.Error("invalidSolution should be nil when DeriveKey is not provided")
-		}
-	})
-}
-
-func TestPasswordWithCounter(t *testing.T) {
-	result := passwordWithCounter([]byte("nonce"), 1)
-	expected := append([]byte("nonce"), 0, 0, 0, 1)
-	if string(result) != string(expected) {
-		t.Errorf("got %v, want %v", result, expected)
+func TestVerifySolution(t *testing.T) {
+	expires := time.Now().Add(10 * time.Minute)
+	var number int64 = 10
+	options := ChallengeOptions{
+		HMACKey:    "test-key",
+		SaltLength: 16,
+		Algorithm:  SHA256,
+		Expires:    &expires,
+		Number:     &number,
+		Params:     url.Values{"foo": {"bar"}},
 	}
 
-	result = passwordWithCounter([]byte("nonce"), 256)
-	expected = append([]byte("nonce"), 0, 0, 1, 0)
-	if string(result) != string(expected) {
-		t.Errorf("got %v, want %v", result, expected)
+	challenge, err := CreateChallenge(options)
+	if err != nil {
+		t.Fatalf("CreateChallenge() error = %v", err)
+	}
+
+	payload := Payload{
+		Algorithm: challenge.Algorithm,
+		Challenge: challenge.Challenge,
+		Number:    10,
+		Salt:      challenge.Salt,
+		Signature: challenge.Signature,
+	}
+
+	valid, err := VerifySolution(payload, "test-key", true)
+	if err != nil {
+		t.Fatalf("VerifySolution() error = %v", err)
+	}
+	if !valid {
+		t.Error("VerifySolution() should return true for valid solution")
 	}
 }
 
-func TestCanonicalJSON(t *testing.T) {
-	t.Run("SortedKeys", func(t *testing.T) {
-		m := map[string]interface{}{
-			"z": "last",
-			"a": "first",
-			"m": "middle",
-		}
-		result, err := canonicalJSON(m)
-		if err != nil {
-			t.Fatalf("canonicalJSON() error = %v", err)
-		}
-		expected := `{"a":"first","m":"middle","z":"last"}`
-		if result != expected {
-			t.Errorf("got %s, want %s", result, expected)
-		}
-	})
-
-	t.Run("NestedSortedKeys", func(t *testing.T) {
-		m := map[string]interface{}{
-			"b": map[string]interface{}{
-				"z": 1,
-				"a": 2,
-			},
-			"a": "first",
-		}
-		result, err := canonicalJSON(m)
-		if err != nil {
-			t.Fatalf("canonicalJSON() error = %v", err)
-		}
-		expected := `{"a":"first","b":{"a":2,"z":1}}`
-		if result != expected {
-			t.Errorf("got %s, want %s", result, expected)
-		}
-	})
-}
-
-func TestBufferStartsWith(t *testing.T) {
-	buf, _ := hex.DecodeString("00aabbcc")
-	prefix, _ := hex.DecodeString("00aa")
-	if !bufferStartsWith(buf, prefix) {
-		t.Error("expected true")
+func TestVerifySolutionWithZero(t *testing.T) {
+	expires := time.Now().Add(10 * time.Minute)
+	var num int64 = 0
+	options := ChallengeOptions{
+		HMACKey:    "test-key",
+		SaltLength: 16,
+		Algorithm:  SHA256,
+		Expires:    &expires,
+		Number:     &num,
+		Params:     url.Values{"foo": {"bar"}},
 	}
 
-	wrongPrefix, _ := hex.DecodeString("ffaa")
-	if bufferStartsWith(buf, wrongPrefix) {
-		t.Error("expected false")
+	challenge, err := CreateChallenge(options)
+	if err != nil {
+		t.Fatalf("CreateChallenge() error = %v", err)
 	}
 
-	if !bufferStartsWith(buf, []byte{}) {
-		t.Error("empty prefix should match")
+	payload := Payload{
+		Algorithm: challenge.Algorithm,
+		Challenge: challenge.Challenge,
+		Number:    0,
+		Salt:      challenge.Salt,
+		Signature: challenge.Signature,
+	}
+
+	valid, err := VerifySolution(payload, "test-key", true)
+	if err != nil {
+		t.Fatalf("VerifySolution() error = %v", err)
+	}
+	if !valid {
+		t.Error("VerifySolution() should return true for valid solution")
 	}
 }
 
-func TestConstantTimeEqual(t *testing.T) {
-	if !constantTimeEqual("hello", "hello") {
-		t.Error("same strings should be equal")
+func TestVerifySolutionWithMap(t *testing.T) {
+	expires := time.Now().Add(10 * time.Minute)
+	var number int64 = 10
+	options := ChallengeOptions{
+		HMACKey:    "test-key",
+		SaltLength: 16,
+		Algorithm:  SHA256,
+		Expires:    &expires,
+		Number:     &number,
+		Params:     url.Values{"foo": {"bar"}},
 	}
-	if constantTimeEqual("hello", "world") {
-		t.Error("different strings should not be equal")
+
+	challenge, err := CreateChallenge(options)
+	if err != nil {
+		t.Fatalf("CreateChallenge() error = %v", err)
+	}
+
+	payload := map[string]interface{}{
+		"algorithm": challenge.Algorithm,
+		"challenge": challenge.Challenge,
+		"number":    10,
+		"salt":      challenge.Salt,
+		"signature": challenge.Signature,
+	}
+
+	valid, err := VerifySolution(payload, "test-key", true)
+	if err != nil {
+		t.Fatalf("VerifySolution() error = %v", err)
+	}
+	if !valid {
+		t.Error("VerifySolution() should return true for valid solution")
+	}
+}
+
+func TestVerifySolutionSafe(t *testing.T) {
+	expires := time.Now().Add(10 * time.Minute)
+	var number int64 = 10
+	options := ChallengeOptions{
+		HMACKey:    "test-key",
+		SaltLength: 16,
+		Algorithm:  SHA256,
+		Expires:    &expires,
+		Number:     &number,
+		Params:     url.Values{"foo": {"bar"}},
+	}
+
+	challenge, err := CreateChallenge(options)
+	if err != nil {
+		t.Fatalf("CreateChallenge() error = %v", err)
+	}
+
+	payload := Payload{
+		Algorithm: challenge.Algorithm,
+		Challenge: challenge.Challenge,
+		Number:    10,
+		Salt:      challenge.Salt,
+		Signature: challenge.Signature,
+	}
+
+	valid, err := VerifySolutionSafe(payload, "test-key", true)
+	if err != nil {
+		t.Fatalf("TestVerifySolutionSafe() error = %v", err)
+	}
+	if !valid {
+		t.Error("TestVerifySolutionSafe() should return true for valid solution")
+	}
+}
+
+func TestVerifySolutionSaltSplicing(t *testing.T) {
+	expires := time.Now().Add(10 * time.Minute)
+	var num int64 = 123
+	options := ChallengeOptions{
+		HMACKey:    "test-key",
+		SaltLength: 16,
+		Algorithm:  SHA256,
+		Expires:    &expires,
+		Number:     &num,
+		Params:     url.Values{"foo": {"bar"}},
+	}
+
+	challenge, err := CreateChallenge(options)
+	if err != nil {
+		t.Fatalf("CreateChallenge() error = %v", err)
+	}
+
+	payload := Payload{
+		Algorithm: challenge.Algorithm,
+		Challenge: challenge.Challenge,
+		Number:    23,
+		Salt:      challenge.Salt + "1",
+		Signature: challenge.Signature,
+	}
+
+	valid, err := VerifySolution(payload, "test-key", true)
+	if err != nil {
+		t.Fatalf("VerifySolution() error = %v", err)
+	}
+	if valid {
+		t.Error("VerifySolution() should return false for invalid spliced solution")
+	}
+}
+
+func TestExtractParams(t *testing.T) {
+	payload := Payload{
+		Salt: "abc123?foo=bar&baz=qux",
+	}
+
+	expectedParams := url.Values{
+		"foo": {"bar"},
+		"baz": {"qux"},
+	}
+
+	params := ExtractParams(payload)
+	if !reflect.DeepEqual(params, expectedParams) {
+		t.Errorf("ExtractParams() = %v, want %v", params, expectedParams)
+	}
+}
+
+func TestVerifyFieldsHash(t *testing.T) {
+	formData := map[string][]string{
+		"name":  {"John Doe"},
+		"email": {"john@example.com"},
+	}
+
+	fields := []string{"name", "email"}
+	expectedHash, _ := hashHex(SHA256, "John Doe\njohn@example.com")
+
+	valid, err := VerifyFieldsHash(formData, fields, expectedHash, SHA256)
+	if err != nil {
+		t.Fatalf("VerifyFieldsHash() error = %v", err)
+	}
+	if !valid {
+		t.Error("VerifyFieldsHash() should return true for valid fields hash")
+	}
+}
+
+func TestVerifyFieldsHashSafe(t *testing.T) {
+	formData := map[string][]string{
+		"name":  {"John Doe"},
+		"email": {"john@example.com"},
+	}
+
+	fields := []string{"name", "email"}
+	expectedHash, _ := hashHex(SHA256, "John Doe\njohn@example.com")
+
+	valid, err := VerifyFieldsHashSafe(formData, fields, expectedHash, SHA256)
+	if err != nil {
+		t.Fatalf("VerifyFieldsHashSafe() error = %v", err)
+	}
+	if !valid {
+		t.Error("VerifyFieldsHashSafe() should return true for valid fields hash")
 	}
 }
 
@@ -445,8 +343,8 @@ func TestVerifyServerSignature(t *testing.T) {
 		verificationData := "expire=" + strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10) +
 			"&fields=field1,field2&reasons=reason1,reason2&score=3&time=" +
 			strconv.FormatInt(time.Now().Unix(), 10) + "&verified=true&abc=123"
-		h, _ := hashBytes(SHA256, []byte(verificationData))
-		expectedSignature, err := hmacHex(SHA256, h, "test-key")
+		hash, _ := hash(SHA256, []byte(verificationData))
+		expectedSignature, err := hmacHex(SHA256, hash, "test-key")
 		if err != nil {
 			t.Fatalf("hmacHex() error = %v", err)
 		}
@@ -457,39 +355,25 @@ func TestVerifyServerSignature(t *testing.T) {
 			Verified:         true,
 		}
 
-		result, err := VerifyServerSignature(payload, "test-key")
+		isValid, data, err := VerifyServerSignature(payload, "test-key")
 		if err != nil {
 			t.Fatalf("VerifyServerSignature() error = %v", err)
 		}
-		if !result.Verified {
-			t.Error("should be verified")
+		if !isValid {
+			t.Error("VerifyServerSignature() should return true for valid signature")
 		}
-		if result.Expired {
-			t.Error("should not be expired")
+		if data.Expire <= 0 || len(data.Fields) == 0 || len(data.Reasons) == 0 || data.Score == 0 || data.Time <= 0 || !data.Verified {
+			t.Errorf("VerifyServerSignature() verificationData = %v, want correct data", data)
 		}
-		if result.InvalidSignature {
-			t.Error("signature should be valid")
-		}
-		if result.InvalidSolution {
-			t.Error("solution should be valid")
-		}
-		if result.VerificationData == nil {
-			t.Fatal("verificationData should not be nil")
-		}
-		if result.VerificationData.Extra["abc"] != "123" {
-			t.Error("wrong extra parameter value")
-		}
-		if len(result.VerificationData.Fields) != 2 {
-			t.Errorf("expected 2 fields, got %d", len(result.VerificationData.Fields))
-		}
-		if len(result.VerificationData.Reasons) != 2 {
-			t.Errorf("expected 2 reasons, got %d", len(result.VerificationData.Reasons))
+		if data.Extra["abc"] != "123" {
+			t.Error("Wrong extra parameter value")
 		}
 	})
 
 	t.Run("InvalidSignature", func(t *testing.T) {
 		verificationData := "expire=" + strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10) +
-			"&verified=true"
+			"&fields=field1,field2&reasons=reason1,reason2&score=3&time=" +
+			strconv.FormatInt(time.Now().Unix(), 10) + "&verified=true"
 		payload := ServerSignaturePayload{
 			Algorithm:        SHA256,
 			VerificationData: verificationData,
@@ -497,23 +381,24 @@ func TestVerifyServerSignature(t *testing.T) {
 			Verified:         true,
 		}
 
-		result, err := VerifyServerSignature(payload, "test-key")
+		isValid, _, err := VerifyServerSignature(payload, "test-key")
 		if err != nil {
 			t.Fatalf("VerifyServerSignature() error = %v", err)
 		}
-		if result.Verified {
-			t.Error("should not be verified")
-		}
-		if !result.InvalidSignature {
-			t.Error("should report invalid signature")
+		if isValid {
+			t.Error("VerifyServerSignature() should return false for invalid signature")
 		}
 	})
 
 	t.Run("ExpiredPayload", func(t *testing.T) {
 		verificationData := "expire=" + strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10) +
-			"&verified=true"
-		h, _ := hashBytes(SHA256, []byte(verificationData))
-		expectedSignature, _ := hmacHex(SHA256, h, "test-key")
+			"&fields=field1,field2&reasons=reason1,reason2&score=3&time=" +
+			strconv.FormatInt(time.Now().Unix(), 10) + "&verified=true"
+		hash, _ := hash(SHA256, []byte(verificationData))
+		expectedSignature, err := hmacHex(SHA256, hash, "test-key")
+		if err != nil {
+			t.Fatalf("hmacHex() error = %v", err)
+		}
 		payload := ServerSignaturePayload{
 			Algorithm:        SHA256,
 			VerificationData: verificationData,
@@ -521,58 +406,174 @@ func TestVerifyServerSignature(t *testing.T) {
 			Verified:         true,
 		}
 
-		result, err := VerifyServerSignature(payload, "test-key")
+		isValid, _, err := VerifyServerSignature(payload, "test-key")
 		if err != nil {
 			t.Fatalf("VerifyServerSignature() error = %v", err)
 		}
-		if result.Verified {
-			t.Error("should not be verified when expired")
-		}
-		if !result.Expired {
-			t.Error("should report expired")
-		}
-	})
-
-	t.Run("InvalidSolution", func(t *testing.T) {
-		verificationData := "expire=" + strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10) +
-			"&verified=false"
-		h, _ := hashBytes(SHA256, []byte(verificationData))
-		expectedSignature, _ := hmacHex(SHA256, h, "test-key")
-		payload := ServerSignaturePayload{
-			Algorithm:        SHA256,
-			VerificationData: verificationData,
-			Signature:        expectedSignature,
-			Verified:         false,
-		}
-
-		result, err := VerifyServerSignature(payload, "test-key")
-		if err != nil {
-			t.Fatalf("VerifyServerSignature() error = %v", err)
-		}
-		if result.Verified {
-			t.Error("should not be verified")
-		}
-		if !result.InvalidSolution {
-			t.Error("should report invalid solution")
+		if isValid {
+			t.Error("VerifyServerSignature() should return false for expired payload")
 		}
 	})
 }
 
-func TestVerifyFieldsHash(t *testing.T) {
-	formData := map[string][]string{
-		"name":  {"John Doe"},
-		"email": {"john@example.com"},
-	}
+func TestVerifyServerSignatureSafe(t *testing.T) {
+	t.Run("ValidSignature", func(t *testing.T) {
+		verificationData := "expire=" + strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10) +
+			"&fields=field1,field2&reasons=reason1,reason2&score=3&time=" +
+			strconv.FormatInt(time.Now().Unix(), 10) + "&verified=true&abc=123"
+		hash, _ := hash(SHA256, []byte(verificationData))
+		expectedSignature, err := hmacHex(SHA256, hash, "test-key")
+		if err != nil {
+			t.Fatalf("hmacHex() error = %v", err)
+		}
+		payload := ServerSignaturePayload{
+			Algorithm:        SHA256,
+			VerificationData: verificationData,
+			Signature:        expectedSignature,
+			Verified:         true,
+		}
 
-	fields := []string{"name", "email"}
-	h, _ := hashBytes(SHA256, []byte("John Doe\njohn@example.com"))
-	expectedHash := hex.EncodeToString(h)
+		isValid, data, err := VerifyServerSignatureSafe(payload, "test-key")
+		if err != nil {
+			t.Fatalf("VerifyServerSignatureSafe() error = %v", err)
+		}
+		if !isValid {
+			t.Error("VerifyServerSignatureSafe() should return true for valid signature")
+		}
+		if data.Expire <= 0 || len(data.Fields) == 0 || len(data.Reasons) == 0 || data.Score == 0 || data.Time <= 0 || !data.Verified {
+			t.Errorf("VerifyServerSignatureSafe() verificationData = %v, want correct data", data)
+		}
+		if data.Extra["abc"] != "123" {
+			t.Error("Wrong extra parameter value")
+		}
+	})
 
-	valid, err := VerifyFieldsHash(formData, fields, expectedHash, SHA256)
-	if err != nil {
-		t.Fatalf("VerifyFieldsHash() error = %v", err)
+	t.Run("InvalidSignature", func(t *testing.T) {
+		verificationData := "expire=" + strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10) +
+			"&fields=field1,field2&reasons=reason1,reason2&score=3&time=" +
+			strconv.FormatInt(time.Now().Unix(), 10) + "&verified=true"
+		payload := ServerSignaturePayload{
+			Algorithm:        SHA256,
+			VerificationData: verificationData,
+			Signature:        "invalidSignature",
+			Verified:         true,
+		}
+
+		isValid, _, err := VerifyServerSignatureSafe(payload, "test-key")
+		if err != nil {
+			t.Fatalf("VerifyServerSignatureSafe() error = %v", err)
+		}
+		if isValid {
+			t.Error("VerifyServerSignatureSafe() should return false for invalid signature")
+		}
+	})
+
+	t.Run("ExpiredPayload", func(t *testing.T) {
+		verificationData := "expire=" + strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10) +
+			"&fields=field1,field2&reasons=reason1,reason2&score=3&time=" +
+			strconv.FormatInt(time.Now().Unix(), 10) + "&verified=true"
+		hash, _ := hash(SHA256, []byte(verificationData))
+		expectedSignature, err := hmacHex(SHA256, hash, "test-key")
+		if err != nil {
+			t.Fatalf("hmacHex() error = %v", err)
+		}
+		payload := ServerSignaturePayload{
+			Algorithm:        SHA256,
+			VerificationData: verificationData,
+			Signature:        expectedSignature,
+			Verified:         true,
+		}
+
+		isValid, _, err := VerifyServerSignatureSafe(payload, "test-key")
+		if err != nil {
+			t.Fatalf("VerifyServerSignatureSafe() error = %v", err)
+		}
+		if isValid {
+			t.Error("VerifyServerSignatureSafe() should return false for expired payload")
+		}
+	})
+}
+
+func TestSolveChallenge(t *testing.T) {
+	for _, tt := range solveChallengeTests {
+		t.Run(tt.name, func(t *testing.T) {
+			stopChan := make(chan struct{})
+			defer close(stopChan)
+
+			if tt.name == "cancellation test" {
+				go func() {
+					time.Sleep(10 * time.Millisecond)
+					_, ok := <-stopChan
+					if ok {
+						close(stopChan)
+					}
+				}()
+			}
+
+			startTime := time.Now()
+			got, err := SolveChallenge(tt.challenge, tt.salt, Algorithm(tt.algorithm), tt.max, tt.start, stopChan)
+			duration := time.Since(startTime)
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("solveChallenge() error = %v, expectError %v", err, tt.expectError)
+				return
+			}
+			if tt.expectError {
+				return
+			}
+
+			if got != nil {
+				if got.Number != tt.expected.Number {
+					t.Errorf("solveChallenge() = %v, want %v", got.Number, tt.expected.Number)
+				}
+				if duration < got.Took {
+					t.Errorf("solveChallenge() took less time than expected, got %v, expected %v", duration, got.Took)
+				}
+			} else if tt.expected != nil {
+				t.Errorf("solveChallenge() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
-	if !valid {
-		t.Error("should return true for valid fields hash")
+}
+
+func TestSolveChallengeSafe(t *testing.T) {
+	for _, tt := range solveChallengeTests {
+		t.Run(tt.name, func(t *testing.T) {
+			stopChan := make(chan struct{})
+			defer close(stopChan)
+
+			if tt.name == "cancellation test" {
+				go func() {
+					time.Sleep(10 * time.Millisecond)
+					_, ok := <-stopChan
+					if ok {
+						close(stopChan)
+					}
+				}()
+			}
+
+			startTime := time.Now()
+			got, err := SolveChallengeSafe(tt.challenge, tt.salt, Algorithm(tt.algorithm), tt.max, tt.start, stopChan)
+			duration := time.Since(startTime)
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("solveChallenge() error = %v, expectError %v", err, tt.expectError)
+				return
+			}
+			if tt.expectError {
+				return
+			}
+
+			if got != nil {
+				if got.Number != tt.expected.Number {
+					t.Errorf("SolveChallengeSafe() = %v, want %v", got.Number, tt.expected.Number)
+				}
+				if duration < got.Took {
+					t.Errorf("SolveChallengeSafe() took less time than expected, got %v, expected %v", duration, got.Took)
+				}
+			} else if tt.expected != nil {
+				t.Errorf("SolveChallengeSafe() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
 }

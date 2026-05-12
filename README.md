@@ -9,22 +9,22 @@ The ALTCHA Go Library is a lightweight library for creating and verifying [ALTCH
 ## Installation
 
 ```sh
-go get github.com/altcha-org/altcha-lib-go
+go get github.com/altcha-org/altcha-lib-go/v2
 ```
 
 ## Packages
 
 | Package | Import path | Description |
 |---|---|---|
-| v2 (default) | `github.com/altcha-org/altcha-lib-go` | ALTCHA v2 PoW protocol |
-| v1 | `github.com/altcha-org/altcha-lib-go/v1` | Legacy ALTCHA v1 protocol |
+| v2 (default) | `github.com/altcha-org/altcha-lib-go/v2` | ALTCHA v2 PoW protocol |
+| v1 (legacy) | `github.com/altcha-org/altcha-lib-go` | Legacy ALTCHA v1 protocol |
 
 ## Usage
 
 ### Create a challenge
 
 ```go
-import altcha "github.com/altcha-org/altcha-lib-go"
+import altcha "github.com/altcha-org/altcha-lib-go/v2"
 
 challenge, err := altcha.CreateChallenge(altcha.CreateChallengeOptions{
     Algorithm:           "PBKDF2/SHA-256",
@@ -61,7 +61,7 @@ if result.Verified {
 
 ### HTTP server example
 
-See [`examples/server`](./examples/server) for a minimal HTTP server with `GET /challenge` and `POST /submit` endpoints.
+See [`examples/server`](./v2/examples/server) for a minimal HTTP server with `GET /challenge` and `POST /submit` endpoints.
 
 ## Key derivation algorithms
 
@@ -227,17 +227,17 @@ type DeriveKeyFunc func(params ChallengeParameters, salt []byte, password []byte
 
 ## v1 (legacy)
 
-The original ALTCHA v1 protocol (SHA-based hash challenge) is available under the `v1` sub-package:
+The original ALTCHA v1 protocol (SHA-based hash challenge) is available at `github.com/altcha-org/altcha-lib-go` (no version suffix):
 
 ```go
-import v1 "github.com/altcha-org/altcha-lib-go/v1"
+import altcha "github.com/altcha-org/altcha-lib-go"
 
-challenge, err := v1.CreateChallenge(v1.ChallengeOptions{
+challenge, err := altcha.CreateChallenge(altcha.ChallengeOptions{
     HMACKey:   "secret",
     MaxNumber: 100000,
 })
 
-ok, err := v1.VerifySolution(payload, "secret", true)
+ok, err := altcha.VerifySolution(payload, "secret", true)
 ```
 
 ## License
