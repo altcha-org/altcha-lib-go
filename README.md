@@ -59,6 +59,29 @@ if result.Verified {
 }
 ```
 
+### Remote verification (Sentinel)
+
+Verify a payload remotely via the ALTCHA Sentinel `/v1/verify/signature` API instead of verifying locally. Timeout and retries are configurable per call:
+
+```go
+result, err := altcha.VerifyServer(ctx, altcha.VerifyServerOptions{
+    URL:          "https://sentinel.example.com/v1/verify/signature",
+    Payload:      payload, // raw payload string from POST /v1/verify
+    Secret:       "your-api-key-secret",
+    Timeout:      5 * time.Second,
+    Retries:      2,
+    RetryBackoff: altcha.RetryBackoffExponential,
+})
+if err != nil {
+    // transport failure: network error, unexpected HTTP status, or ctx cancellation
+}
+if result.Verified {
+    // valid
+}
+```
+
+A definitive verdict from Sentinel (including a rejection) is returned as `(VerifyServerResult, nil)`; check `result.Verified`/`result.Reason`. A transport failure that survives all retries is returned as an `error` — use `errors.As` for `*altcha.HTTPStatusError`, or `errors.Is` for context errors.
+
 ### HTTP server example
 
 See [`examples/server`](./v2/examples/server) for a minimal HTTP server with `GET /challenge` and `POST /submit` endpoints.

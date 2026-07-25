@@ -27,6 +27,7 @@ type ServerSignatureVerificationData struct {
 	Expire           int64    `json:"expire,omitempty"`
 	Fields           []string `json:"fields,omitempty"`
 	FieldsHash       string   `json:"fieldsHash,omitempty"`
+	Id               string   `json:"id,omitempty"`
 	IpAddress        string   `json:"ipAddress,omitempty"`
 	Reasons          []string `json:"reasons,omitempty"`
 	Score            float64  `json:"score,omitempty"`
