@@ -277,9 +277,9 @@ func parseServerSignature(payload interface{}) (ServerSignaturePayload, ServerSi
 	}
 
 	var verificationData ServerSignatureVerificationData
+	verificationData.Extra = make(map[string]interface{})
 	params, err := url.ParseQuery(parsedPayload.VerificationData)
 	if err == nil {
-		verificationData.Extra = make(map[string]interface{})
 		verificationData.Classification = params.Get("classification")
 		verificationData.Country = params.Get("country")
 		verificationData.DetectedLanguage = params.Get("detectedLanguage")
