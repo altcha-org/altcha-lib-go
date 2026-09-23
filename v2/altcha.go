@@ -198,6 +198,45 @@ func bufferStartsWith(buf, prefix []byte) bool {
 	return true
 }
 
+// keyPrefix is a parsed hex key prefix. Odd-length prefixes are supported:
+// the trailing hex digit is matched against the high nibble of the next byte,
+// mirroring the JS client's hex-string comparison.
+type keyPrefix struct {
+	bytes     []byte
+	nibble    byte // high nibble of the byte following bytes, low nibble zero
+	hasNibble bool
+}
+
+// parseKeyPrefix decodes a hex key prefix of any length.
+func parseKeyPrefix(s string) (keyPrefix, error) {
+	even := len(s) &^ 1
+	b, err := hex.DecodeString(s[:even])
+	if err != nil {
+		return keyPrefix{}, fmt.Errorf("invalid key prefix hex: %w", err)
+	}
+	p := keyPrefix{bytes: b}
+	if even != len(s) {
+		n, err := hex.DecodeString(s[even:] + "0")
+		if err != nil {
+			return keyPrefix{}, fmt.Errorf("invalid key prefix hex: %w", err)
+		}
+		p.nibble = n[0]
+		p.hasNibble = true
+	}
+	return p, nil
+}
+
+// matches reports whether key starts with the prefix.
+func (p keyPrefix) matches(key []byte) bool {
+	if !bufferStartsWith(key, p.bytes) {
+		return false
+	}
+	if !p.hasNibble {
+		return true
+	}
+	return len(key) > len(p.bytes) && key[len(p.bytes)]&0xf0 == p.nibble
+}
+
 // canonicalJSON marshals v to JSON with all object keys sorted recursively.
 func canonicalJSON(v interface{}) (string, error) {
 	b, err := json.Marshal(v)
@@ -396,9 +435,9 @@ func SolveChallenge(options SolveChallengeOptions) (*Solution, error) {
 	}
 
 	params := options.Challenge.Parameters
-	prefix, err := hex.DecodeString(params.KeyPrefix)
+	prefix, err := parseKeyPrefix(params.KeyPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("invalid key prefix hex: %w", err)
+		return nil, err
 	}
 
 	saltBytes, err := hex.DecodeString(params.Salt)
@@ -428,7 +467,7 @@ func SolveChallenge(options SolveChallengeOptions) (*Solution, error) {
 			return nil, err
 		}
 
-		if bufferStartsWith(derivedKey, prefix) {
+		if prefix.matches(derivedKey) {
 			elapsed := time.Since(startTime).Milliseconds()
 			return &Solution{
 				Counter:    n,
@@ -531,13 +570,13 @@ func VerifySolution(options VerifySolutionOptions) (VerifySolutionResult, error)
 
 		expectedDerivedKey := hex.EncodeToString(derivedKey)
 
-		prefix, err := hex.DecodeString(params.KeyPrefix)
+		prefix, err := parseKeyPrefix(params.KeyPrefix)
 		if err != nil {
 			result.Time = time.Since(startTime).Milliseconds()
-			return result, fmt.Errorf("invalid key prefix hex: %w", err)
+			return result, err
 		}
 
-		if constantTimeEqual(expectedDerivedKey, options.Solution.DerivedKey) && bufferStartsWith(derivedKey, prefix) {
+		if constantTimeEqual(expectedDerivedKey, options.Solution.DerivedKey) && prefix.matches(derivedKey) {
 			*result.InvalidSolution = false
 			result.Verified = true
 		}

@@ -164,6 +164,44 @@ func TestSolveChallengeV2(t *testing.T) {
 		}
 	})
 
+	t.Run("OddLengthKeyPrefix", func(t *testing.T) {
+		deriveKey := DeriveKeyPBKDF2()
+		challenge, err := CreateChallenge(CreateChallengeOptions{
+			Algorithm:           "PBKDF2/SHA-256",
+			HMACSignatureSecret: "test-secret",
+			Cost:                1000,
+			KeyLength:           16,
+			KeyPrefix:           "0",
+		})
+		if err != nil {
+			t.Fatalf("CreateChallenge() error = %v", err)
+		}
+
+		solution, err := SolveChallenge(SolveChallengeOptions{
+			Challenge: challenge,
+			DeriveKey: deriveKey,
+		})
+		if err != nil {
+			t.Fatalf("SolveChallenge() error = %v", err)
+		}
+		if solution.DerivedKey[0] != '0' {
+			t.Errorf("derivedKey %s does not start with prefix 0", solution.DerivedKey)
+		}
+
+		result, err := VerifySolution(VerifySolutionOptions{
+			Challenge:           challenge,
+			Solution:            *solution,
+			DeriveKey:           deriveKey,
+			HMACSignatureSecret: "test-secret",
+		})
+		if err != nil {
+			t.Fatalf("VerifySolution() error = %v", err)
+		}
+		if !result.Verified {
+			t.Error("VerifySolution() should return verified=true")
+		}
+	})
+
 	t.Run("WithCancellation", func(t *testing.T) {
 		deriveKey := DeriveKeyPBKDF2()
 		challenge, err := CreateChallenge(CreateChallengeOptions{
@@ -428,6 +466,38 @@ func TestBufferStartsWith(t *testing.T) {
 
 	if !bufferStartsWith(buf, []byte{}) {
 		t.Error("empty prefix should match")
+	}
+}
+
+func TestKeyPrefixMatches(t *testing.T) {
+	key, _ := hex.DecodeString("00aabbcc")
+	cases := []struct {
+		prefix string
+		want   bool
+	}{
+		{"", true},
+		{"0", true},
+		{"1", false},
+		{"00a", true},
+		{"00A", true},
+		{"00b", false},
+		{"00aabbcc", true},
+		{"00aabbcc0", false}, // longer than the key
+	}
+	for _, c := range cases {
+		p, err := parseKeyPrefix(c.prefix)
+		if err != nil {
+			t.Fatalf("parseKeyPrefix(%q) error = %v", c.prefix, err)
+		}
+		if got := p.matches(key); got != c.want {
+			t.Errorf("parseKeyPrefix(%q).matches = %v, want %v", c.prefix, got, c.want)
+		}
+	}
+
+	for _, bad := range []string{"g", "00g", "0g0"} {
+		if _, err := parseKeyPrefix(bad); err == nil {
+			t.Errorf("parseKeyPrefix(%q) should fail", bad)
+		}
 	}
 }
 
