@@ -82,6 +82,8 @@ if result.Verified {
 
 A definitive verdict from Sentinel (including a rejection) is returned as `(VerifyServerResult, nil)`; check `result.Verified`/`result.Reason`. A transport failure that survives all retries is returned as an `error` — use `errors.As` for `*altcha.HTTPStatusError`, or `errors.Is` for context errors.
 
+See [`examples/sentinel`](./v2/examples/sentinel) for an HTTP server with a `POST /submit` endpoint that verifies Sentinel payloads this way.
+
 ### HTTP server example
 
 See [`examples/server`](./v2/examples/server) for a minimal HTTP server with `GET /challenge` and `POST /submit` endpoints.

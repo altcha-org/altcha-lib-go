@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -194,16 +195,20 @@ func TestVerifyServer(t *testing.T) {
 		}
 	})
 
-	t.Run("VerificationDataRoundTrips", func(t *testing.T) {
+	t.Run("SentinelVerificationData", func(t *testing.T) {
+		// Shape of a real /v1/verify/signature response: grouped objects, an
+		// email object (not a string) and an all-digit id turned into a number.
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(VerifyServerResult{
-				Verified: true,
-				VerificationData: &ServerSignatureVerificationData{
-					Id:       "abc123",
-					Email:    "user@example.com",
-					Verified: true,
-				},
-			})
+			w.Write([]byte(`{"apiKey":"key_1","verified":true,"verificationData":{
+				"classification":"GOOD","challengeAlgorithm":"PBKDF2/SHA-256",
+				"device":{"browser":"Firefox","edk":123,"type":"desktop"},
+				"email":{"score":0.5,"triggeredRules":"free_provider"},
+				"expire":1700000000,"fields":["email","message"],"fieldsHash":"abc",
+				"id":12345,"ipAddress":"1.2.3.4",
+				"location":{"countryCode":"id","score":1.2,"timeZone":"Asia/Jakarta","triggeredRules":""},
+				"origin":"https://example.com","params":{"plan":"pro","n":7},"penalty":2,
+				"reasons":[],"score":0.8,"text":{"language":"en","score":0,"triggeredRules":""},
+				"time":1699999000,"verified":true,"hisScore":0.9,"hisAssistive":"false"}}`))
 		}))
 		defer server.Close()
 
@@ -214,11 +219,49 @@ func TestVerifyServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("VerifyServer() error = %v", err)
 		}
-		if result.VerificationData == nil {
-			t.Fatal("expected VerificationData to be non-nil")
+		vd := result.VerificationData
+		if !result.Verified || vd == nil {
+			t.Fatalf("expected verified result with data, got %+v", result)
 		}
-		if result.VerificationData.Id != "abc123" {
-			t.Errorf("expected Id = abc123, got %s", result.VerificationData.Id)
+		want := ServerSignatureVerificationData{
+			ChallengeAlgorithm: "PBKDF2/SHA-256",
+			Classification:     "GOOD",
+			Device:             &VerificationDevice{Browser: "Firefox", Edk: "123", Type: "desktop"},
+			Email:              &VerificationScore{Score: 0.5, TriggeredRules: "free_provider"},
+			Expire:             1700000000,
+			Fields:             []string{"email", "message"},
+			FieldsHash:         "abc",
+			Id:                 "12345",
+			IpAddress:          "1.2.3.4",
+			Location:           &VerificationLocation{CountryCode: "id", Score: 1.2, TimeZone: "Asia/Jakarta"},
+			Origin:             "https://example.com",
+			Params:             map[string]string{"plan": "pro", "n": "7"},
+			Penalty:            2,
+			Score:              0.8,
+			Text:               &VerificationText{Language: "en"},
+			Time:               1699999000,
+			Verified:           true,
+			Extra:              map[string]string{"hisScore": "0.9", "hisAssistive": "false"},
+		}
+		if !reflect.DeepEqual(*vd, want) {
+			t.Errorf("verification data mismatch\n got: %+v\nwant: %+v", *vd, want)
+		}
+	})
+
+	t.Run("VerificationDataWrongTypesIgnored", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"verified":true,"verificationData":{"email":"user@example.com",
+				"location":"x","score":{"a":1},"expire":"soon","verified":true}}`))
+		}))
+		defer server.Close()
+
+		result, err := VerifyServer(context.Background(), VerifyServerOptions{URL: server.URL, Payload: "p"})
+		if err != nil {
+			t.Fatalf("VerifyServer() error = %v", err)
+		}
+		vd := result.VerificationData
+		if vd == nil || !vd.Verified || vd.Email != nil || vd.Location != nil || vd.Expire != 0 {
+			t.Errorf("wrong types should be ignored, got %+v", vd)
 		}
 	})
 }

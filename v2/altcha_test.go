@@ -2,6 +2,9 @@ package altcha
 
 import (
 	"encoding/hex"
+	"encoding/json"
+	"os"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -450,6 +453,62 @@ func TestCanonicalJSON(t *testing.T) {
 			t.Errorf("got %s, want %s", result, expected)
 		}
 	})
+
+	// testdata/canonical_json.json: each "expected" is altcha-lib's
+	// canonicalJSON(JSON.parse(input)) (altcha-lib/src/v2/helpers.ts).
+	raw, err := os.ReadFile("testdata/canonical_json.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors []struct{ Name, Input, Expected string }
+	if err := json.Unmarshal(raw, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range vectors {
+		t.Run("JS/"+v.Name, func(t *testing.T) {
+			got, err := canonicalJSON(json.RawMessage(v.Input))
+			if err != nil {
+				t.Fatalf("canonicalJSON() error = %v", err)
+			}
+			if got != v.Expected {
+				t.Errorf("got  %s\nwant %s", got, v.Expected)
+			}
+		})
+	}
+}
+
+// A challenge created by the JS library must verify after being decoded into
+// Go types, whose maps cannot hold the key order of objects inside arrays.
+func TestVerifySolutionJSChallengeSignature(t *testing.T) {
+	const params = `{"algorithm":"PBKDF2/SHA-256","nonce":"a1","salt":"b2","cost":1000,"keyLength":32,"keyPrefix":"00","expiresAt":4102444800,"data":{"z":"<&>","items":[{"name":"b","id":2},{"name":"a","id":1}],"10":"ten","2":"two"}}`
+	// altcha-lib canonicalJSON(JSON.parse(params))
+	const canonical = `{"algorithm":"PBKDF2/SHA-256","cost":1000,"data":{"2":"two","10":"ten","items":[{"name":"b","id":2},{"name":"a","id":1}],"z":"<&>"},"expiresAt":4102444800,"keyLength":32,"keyPrefix":"00","nonce":"a1","salt":"b2"}`
+	signature, err := hmacHex(SHA256, []byte(canonical), "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var challenge Challenge
+	if err := json.Unmarshal([]byte(`{"parameters":`+params+`,"signature":"`+signature+`"}`), &challenge); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := VerifySolution(VerifySolutionOptions{Challenge: challenge, HMACSignatureSecret: "secret"})
+	if err != nil {
+		t.Fatalf("VerifySolution() error = %v", err)
+	}
+	if !result.Verified || result.InvalidSignature == nil || *result.InvalidSignature {
+		t.Fatalf("JS-signed challenge should verify, got %+v", result)
+	}
+
+	// Changing Data after decoding must be reflected, not masked by the received bytes.
+	challenge.Parameters.Data["z"] = "changed"
+	result, err = VerifySolution(VerifySolutionOptions{Challenge: challenge, HMACSignatureSecret: "secret"})
+	if err != nil {
+		t.Fatalf("VerifySolution() error = %v", err)
+	}
+	if result.Verified {
+		t.Error("modified data should not verify")
+	}
 }
 
 func TestBufferStartsWith(t *testing.T) {
@@ -626,6 +685,55 @@ func TestVerifyServerSignature(t *testing.T) {
 			t.Error("should report invalid solution")
 		}
 	})
+}
+
+func TestParseVerificationDataSentinelGroups(t *testing.T) {
+	// Built like Sentinel's POST /v1/verify (URLSearchParams.toString()).
+	data := "email.score=0.5&email.triggeredRules=free_provider&ip.score=1&ip.triggeredRules=vpn%2Cproxy" +
+		"&location.countryCode=id&location.score=1.2&location.timeZone=Asia%2FJakarta&location.triggeredRules=" +
+		"&text.language=en&text.score=0&text.triggeredRules=&fields=email%2Cmessage&fieldsHash=abc" +
+		"&id=v_1&classification=NEUTRAL&challengeAlgorithm=PBKDF2%2FSHA-256&hisAssistive=false&hisScore=0.9" +
+		"&device.browser=Chrome&device.edk=e1&device.type=desktop&expire=&ipAddress=1.2.3.4&penalty=3" +
+		"&origin=https%3A%2F%2Fexample.com&reasons=&score=1.5&time=1699999000&verified=true&params.plan=pro"
+
+	want := &ServerSignatureVerificationData{
+		ChallengeAlgorithm: "PBKDF2/SHA-256",
+		Classification:     "NEUTRAL",
+		Device:             &VerificationDevice{Browser: "Chrome", Edk: "e1", Type: "desktop"},
+		Email:              &VerificationScore{Score: 0.5, TriggeredRules: "free_provider"},
+		Fields:             []string{"email", "message"},
+		FieldsHash:         "abc",
+		Id:                 "v_1",
+		IP:                 &VerificationScore{Score: 1, TriggeredRules: "vpn,proxy"},
+		IpAddress:          "1.2.3.4",
+		Location:           &VerificationLocation{CountryCode: "id", Score: 1.2, TimeZone: "Asia/Jakarta"},
+		Origin:             "https://example.com",
+		Params:             map[string]string{"plan": "pro"},
+		Penalty:            3,
+		Score:              1.5,
+		Text:               &VerificationText{Language: "en"},
+		Time:               1699999000,
+		Verified:           true,
+		Extra:              map[string]string{"hisAssistive": "false", "hisScore": "0.9"},
+	}
+	got := ParseVerificationData(data)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+
+	// The nested JSON form from /v1/verify/signature decodes to the same value.
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded ServerSignatureVerificationData
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	want.Extra = map[string]string{}
+	if !reflect.DeepEqual(&decoded, want) {
+		t.Errorf("JSON round trip: got %+v\nwant %+v", &decoded, want)
+	}
 }
 
 func TestVerifyFieldsHash(t *testing.T) {

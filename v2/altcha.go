@@ -11,8 +11,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
-	"strings"
 	"time"
 )
 
@@ -50,6 +48,11 @@ type ChallengeParameters struct {
 	Parallelism  int                    `json:"parallelism,omitempty"`
 	ExpiresAt    int64                  `json:"expiresAt,omitempty"`
 	Data         map[string]interface{} `json:"data,omitempty"`
+
+	// rawData is the "data" value exactly as decoded by UnmarshalJSON. A Go map
+	// cannot hold key order, so it is re-emitted verbatim while Data still
+	// matches it; see MarshalJSON.
+	rawData json.RawMessage
 }
 
 // Solution holds the result of solving a v2 challenge.
@@ -235,72 +238,6 @@ func (p keyPrefix) matches(key []byte) bool {
 		return true
 	}
 	return len(key) > len(p.bytes) && key[len(p.bytes)]&0xf0 == p.nibble
-}
-
-// canonicalJSON marshals v to JSON with all object keys sorted recursively.
-func canonicalJSON(v interface{}) (string, error) {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return "", err
-	}
-	var parsed interface{}
-	if err := json.Unmarshal(b, &parsed); err != nil {
-		return "", err
-	}
-	out, err := marshalSorted(parsed)
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}
-
-// marshalSorted recursively serializes a value to JSON with sorted object keys.
-func marshalSorted(v interface{}) ([]byte, error) {
-	switch val := v.(type) {
-	case map[string]interface{}:
-		keys := make([]string, 0, len(val))
-		for k := range val {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		var buf strings.Builder
-		buf.WriteByte('{')
-		for i, k := range keys {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			kb, err := json.Marshal(k)
-			if err != nil {
-				return nil, err
-			}
-			buf.Write(kb)
-			buf.WriteByte(':')
-			vb, err := marshalSorted(val[k])
-			if err != nil {
-				return nil, err
-			}
-			buf.Write(vb)
-		}
-		buf.WriteByte('}')
-		return []byte(buf.String()), nil
-	case []interface{}:
-		var buf strings.Builder
-		buf.WriteByte('[')
-		for i, item := range val {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			vb, err := marshalSorted(item)
-			if err != nil {
-				return nil, err
-			}
-			buf.Write(vb)
-		}
-		buf.WriteByte(']')
-		return []byte(buf.String()), nil
-	default:
-		return json.Marshal(v)
-	}
 }
 
 // CreateChallenge creates a new v2 challenge.
