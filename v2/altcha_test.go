@@ -3,6 +3,7 @@ package altcha
 import (
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"os"
 	"reflect"
 	"strconv"
@@ -280,6 +281,21 @@ func TestVerifySolutionV2(t *testing.T) {
 		}
 	})
 
+	t.Run("NegativeExpiresAt", func(t *testing.T) {
+		challenge := Challenge{Parameters: ChallengeParameters{Algorithm: "PBKDF2/SHA-256", ExpiresAt: -1}}
+		result, err := VerifySolution(VerifySolutionOptions{
+			Challenge:           challenge,
+			HMACSignatureSecret: "test-secret",
+			DeriveKey:           DeriveKeyPBKDF2(),
+		})
+		if err != nil {
+			t.Fatalf("VerifySolution() error = %v", err)
+		}
+		if !result.Expired || result.Verified {
+			t.Errorf("negative expiresAt should be expired, got %+v", result)
+		}
+	})
+
 	t.Run("InvalidSignature", func(t *testing.T) {
 		challenge, err := CreateChallenge(CreateChallengeOptions{
 			Algorithm:           "PBKDF2/SHA-256",
@@ -483,6 +499,32 @@ func TestPasswordWithCounter(t *testing.T) {
 	expected = append([]byte("nonce"), 0, 0, 1, 0)
 	if string(result) != string(expected) {
 		t.Errorf("got %v, want %v", result, expected)
+	}
+}
+
+func TestIsExpired(t *testing.T) {
+	const sec = 1790899664
+	tests := []struct {
+		name      string
+		expiresAt int64
+		now       time.Time
+		want      bool
+	}{
+		{"zero means no expiry", 0, time.Unix(sec, 0), false},
+		{"future", sec + 1, time.Unix(sec, 999_999_999), false},
+		{"exact second", sec, time.Unix(sec, 0), false},
+		{"fraction past the second", sec, time.Unix(sec, 1_000_000), true},
+		{"past", sec - 1, time.Unix(sec, 0), true},
+		{"negative", -1, time.Unix(sec, 0), true},
+		{"max int64", math.MaxInt64, time.Unix(sec, 0), false},
+		{"min int64", math.MinInt64, time.Unix(sec, 0), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isExpired(tt.expiresAt, tt.now); got != tt.want {
+				t.Errorf("isExpired(%d, %v) = %v, want %v", tt.expiresAt, tt.now, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -733,6 +775,47 @@ func TestVerifyServerSignature(t *testing.T) {
 		}
 		if !result.Expired {
 			t.Error("should report expired")
+		}
+	})
+
+	// Expected values follow altcha-lib: `!!expire && expire < Math.floor(Date.now() / 1000)`,
+	// where values parseVerificationData keeps as strings are coerced by `<`.
+	t.Run("ExpireValues", func(t *testing.T) {
+		now := time.Now().Unix()
+		cases := []struct {
+			expire  string
+			expired bool
+		}{
+			{strconv.FormatInt(now+600, 10), false},
+			{strconv.FormatInt(now-600, 10), true},
+			{strconv.FormatInt(now-600, 10) + ".5", true},
+			{"0", false},
+			{"-5", true},
+			{"-0.5", true},
+			{"-1e999", true},
+			{"1e30", false},
+			{"99999999999999999999", false},
+			{"NaN", false},
+			{"abc", false},
+		}
+		for _, c := range cases {
+			t.Run(c.expire, func(t *testing.T) {
+				verificationData := "expire=" + c.expire + "&verified=true"
+				h, _ := hashBytes(SHA256, []byte(verificationData))
+				signature, _ := hmacHex(SHA256, h, "test-key")
+				result, err := VerifyServerSignature(ServerSignaturePayload{
+					Algorithm:        SHA256,
+					VerificationData: verificationData,
+					Signature:        signature,
+					Verified:         true,
+				}, "test-key")
+				if err != nil {
+					t.Fatalf("VerifyServerSignature() error = %v", err)
+				}
+				if result.Expired != c.expired || result.Verified == c.expired {
+					t.Errorf("expire=%s: got expired=%v verified=%v, want expired=%v", c.expire, result.Expired, result.Verified, c.expired)
+				}
+			})
 		}
 	})
 

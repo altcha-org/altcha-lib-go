@@ -416,6 +416,17 @@ func SolveChallenge(options SolveChallengeOptions) (*Solution, error) {
 	}
 }
 
+// isExpired reports whether expiresAt (unix seconds) is before now, compared
+// with sub-second precision like JS `expiresAt && expiresAt < Date.now() / 1000`.
+// Zero means no expiry; negative values are in the past.
+func isExpired(expiresAt int64, now time.Time) bool {
+	if expiresAt == 0 {
+		return false
+	}
+	sec := now.Unix()
+	return expiresAt < sec || (expiresAt == sec && now.Nanosecond() > 0)
+}
+
 // VerifySolution verifies a v2 solution against the challenge.
 func VerifySolution(options VerifySolutionOptions) (VerifySolutionResult, error) {
 	startTime := time.Now()
@@ -429,12 +440,10 @@ func VerifySolution(options VerifySolutionOptions) (VerifySolutionResult, error)
 	params := options.Challenge.Parameters
 
 	// Check expiration
-	if params.ExpiresAt > 0 {
-		if time.Now().Unix() > params.ExpiresAt {
-			result.Expired = true
-			result.Time = time.Since(startTime).Milliseconds()
-			return result, nil
-		}
+	if isExpired(params.ExpiresAt, startTime) {
+		result.Expired = true
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, nil
 	}
 
 	hmacAlgorithm := options.HMACAlgorithm

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/url"
 	"strconv"
@@ -251,11 +252,26 @@ func parseFloat64(s string) float64 {
 	return f
 }
 
+// parseInt64 parses an integer, falling back to a float that is floored and
+// clamped to the int64 range (NaN or unparsable gives 0). Flooring keeps
+// comparisons against whole seconds equal to JS number comparison, e.g.
+// "-0.5" stays in the past instead of truncating to 0 (no expiry).
 func parseInt64(s string) int64 {
 	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
 		return n
 	}
-	return int64(parseFloat64(s))
+	f, err := strconv.ParseFloat(s, 64)
+	if (err != nil && !errors.Is(err, strconv.ErrRange)) || math.IsNaN(f) {
+		return 0
+	}
+	f = math.Floor(f)
+	switch {
+	case f >= math.MaxInt64:
+		return math.MaxInt64
+	case f < math.MinInt64:
+		return math.MinInt64
+	}
+	return int64(f)
 }
 
 // parsePayload decodes a ServerSignaturePayload from either a base64 JSON string or a struct value.
@@ -303,7 +319,9 @@ func VerifyServerSignature(payload interface{}, hmacKey string) (VerifyServerSig
 
 	vd := ParseVerificationData(parsedPayload.VerificationData)
 
-	expired := vd != nil && vd.Expire > 0 && vd.Expire < time.Now().Unix()
+	// Like JS `!!expire && expire < Math.floor(Date.now() / 1000)`: whole
+	// seconds, and any non-zero value (including negative) is an expiry.
+	expired := vd != nil && vd.Expire != 0 && vd.Expire < time.Now().Unix()
 	invalidSignature := !constantTimeEqual(parsedPayload.Signature, expectedSignature)
 	invalidSolution := vd == nil || !vd.Verified || !parsedPayload.Verified
 	verified := !expired && !invalidSignature && !invalidSolution
