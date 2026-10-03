@@ -181,7 +181,7 @@ Creates a new v2 challenge.
 
 ### `SolveChallenge(options SolveChallengeOptions) (*Solution, error)`
 
-Brute-forces counter values until the derived key matches the challenge prefix. Returns `nil` if stopped via `StopChan`.
+Brute-forces counter values until the derived key matches the challenge prefix. Returns `nil` if stopped via `StopChan` or when `Timeout` elapses.
 
 | Field | Type | Description |
 |---|---|---|
@@ -190,6 +190,7 @@ Brute-forces counter values until the derived key matches the challenge prefix. 
 | `CounterStart` | `int` | Starting counter value (default: 0) |
 | `CounterStep` | `int` | Counter increment per iteration (default: 1) |
 | `StopChan` | `<-chan struct{}` | Optional channel to abort solving |
+| `Timeout` | `time.Duration` | Maximum solving time (default: 90s); negative disables it |
 
 ### `VerifySolution(options VerifySolutionOptions) (VerifySolutionResult, error)`
 

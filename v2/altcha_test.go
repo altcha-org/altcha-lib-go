@@ -315,6 +315,65 @@ func TestSolveChallengeV2(t *testing.T) {
 			t.Error("SolveChallenge() should return nil when cancelled")
 		}
 	})
+
+	unsolvable := func(t *testing.T) Challenge {
+		t.Helper()
+		challenge, err := CreateChallenge(CreateChallengeOptions{
+			Algorithm: "PBKDF2/SHA-256",
+			Cost:      1,
+			KeyLength: 16,
+			KeyPrefix: "ffffffffffffffff", // very unlikely prefix
+		})
+		if err != nil {
+			t.Fatalf("CreateChallenge() error = %v", err)
+		}
+		return challenge
+	}
+
+	t.Run("WithTimeout", func(t *testing.T) {
+		start := time.Now()
+		solution, err := SolveChallenge(SolveChallengeOptions{
+			Challenge: unsolvable(t),
+			DeriveKey: DeriveKeyPBKDF2(),
+			Timeout:   50 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatalf("SolveChallenge() error = %v", err)
+		}
+		if solution != nil {
+			t.Error("SolveChallenge() should return nil on timeout")
+		}
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Errorf("SolveChallenge() took %v, timeout not applied", elapsed)
+		}
+	})
+
+	t.Run("NegativeTimeoutDisables", func(t *testing.T) {
+		// Time has elapsed (> -1ns) before the match, so a negative timeout
+		// treated as a deadline would stop the solve instead of disabling it.
+		var calls int
+		deriveKey := func(ChallengeParameters, []byte, []byte) ([]byte, error) {
+			calls++
+			if calls < 3 {
+				time.Sleep(time.Millisecond)
+				return []byte{0x00}, nil
+			}
+			return []byte{0xff}, nil
+		}
+		challenge := unsolvable(t)
+		challenge.Parameters.KeyPrefix = "ff"
+		solution, err := SolveChallenge(SolveChallengeOptions{
+			Challenge: challenge,
+			DeriveKey: deriveKey,
+			Timeout:   -1,
+		})
+		if err != nil {
+			t.Fatalf("SolveChallenge() error = %v", err)
+		}
+		if solution == nil || solution.Counter != 2 {
+			t.Errorf("expected solution at counter 2, got %+v", solution)
+		}
+	})
 }
 
 func TestVerifySolutionV2(t *testing.T) {

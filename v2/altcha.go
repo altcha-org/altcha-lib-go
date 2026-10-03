@@ -30,6 +30,7 @@ const (
 	defaultKeyPrefixRatio = 2
 	saltLength            = 16 // bytes
 	nonceLength           = 16 // bytes
+	defaultSolveTimeout   = 90 * time.Second
 )
 
 // Challenge represents a v2 challenge with parameters and signature.
@@ -107,6 +108,9 @@ type SolveChallengeOptions struct {
 	CounterStep  int
 	DeriveKey    DeriveKeyFunc
 	StopChan     <-chan struct{}
+	// Timeout bounds the solving time (default: 90s, as in altcha-lib).
+	// A negative value disables it.
+	Timeout time.Duration
 }
 
 // VerifySolutionOptions configures solution verification.
@@ -405,14 +409,22 @@ func SolveChallenge(options SolveChallengeOptions) (*Solution, error) {
 
 	startTime := time.Now()
 
+	timeout := options.Timeout
+	if timeout == 0 {
+		timeout = defaultSolveTimeout
+	}
+
 	for n := options.CounterStart; ; n += counterStep {
-		// Check for cancellation
+		// Check for cancellation and timeout
 		if options.StopChan != nil {
 			select {
 			case <-options.StopChan:
 				return nil, nil
 			default:
 			}
+		}
+		if timeout > 0 && time.Since(startTime) > timeout {
+			return nil, nil
 		}
 
 		password := passwordWithCounter(nonceBytes, n)
