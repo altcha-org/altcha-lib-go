@@ -58,6 +58,19 @@ func TestCreateChallengeV2(t *testing.T) {
 		}
 	})
 
+	t.Run("CounterWithoutDeriveKey", func(t *testing.T) {
+		counter := 42
+		challenge, err := CreateChallenge(CreateChallengeOptions{
+			Algorithm:           "PBKDF2/SHA-256",
+			HMACSignatureSecret: "test-secret",
+			Counter:             &counter,
+			Cost:                1000,
+		})
+		if err == nil {
+			t.Fatalf("expected error when Counter is set without DeriveKey, got keyPrefix %q", challenge.Parameters.KeyPrefix)
+		}
+	})
+
 	t.Run("WithExpiresAt", func(t *testing.T) {
 		expires := time.Now().Add(10 * time.Minute)
 		challenge, err := CreateChallenge(CreateChallengeOptions{

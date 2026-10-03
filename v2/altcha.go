@@ -252,21 +252,22 @@ func CreateChallenge(options CreateChallengeOptions) (Challenge, error) {
 		return Challenge{}, fmt.Errorf("Cost parameter must be greater than zero")
 	}
 
+	if options.Counter != nil && options.DeriveKey == nil {
+		return Challenge{}, fmt.Errorf("DeriveKey function is required when Counter is set")
+	}
+
 	keyLength := options.KeyLength
 	if keyLength <= 0 {
 		keyLength = defaultKeyLength
 	}
 
 	keyPrefix := options.KeyPrefix
+	if keyPrefix == "" {
+		keyPrefix = defaultKeyPrefix
+	}
 	keyPrefixLength := options.KeyPrefixLength
 	if keyPrefixLength <= 0 {
 		keyPrefixLength = keyLength / defaultKeyPrefixRatio
-	}
-
-	if options.Counter == nil {
-		if keyPrefix == "" {
-			keyPrefix = defaultKeyPrefix
-		}
 	}
 
 	// Generate salt
@@ -305,7 +306,7 @@ func CreateChallenge(options CreateChallengeOptions) (Challenge, error) {
 
 	// If a deterministic counter is provided, derive the key and set the key prefix
 	var derivedKey []byte
-	if options.Counter != nil && options.DeriveKey != nil {
+	if options.Counter != nil {
 		saltBytes2, err := hex.DecodeString(salt)
 		if err != nil {
 			return Challenge{}, fmt.Errorf("invalid salt hex: %w", err)
