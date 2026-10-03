@@ -28,6 +28,8 @@ const (
 	defaultKeyLength      = 32
 	defaultKeyPrefix      = "00"
 	defaultKeyPrefixRatio = 2
+	saltLength            = 16 // bytes
+	nonceLength           = 16 // bytes
 )
 
 // Challenge represents a v2 challenge with parameters and signature.
@@ -288,14 +290,14 @@ func CreateChallenge(options CreateChallengeOptions) (Challenge, error) {
 	}
 
 	// Generate salt
-	saltBytes, err := randomBytes(12)
+	saltBytes, err := randomBytes(saltLength)
 	if err != nil {
 		return Challenge{}, err
 	}
 	salt := hex.EncodeToString(saltBytes)
 
 	// Generate nonce
-	nonceBytes, err := randomBytes(12)
+	nonceBytes, err := randomBytes(nonceLength)
 	if err != nil {
 		return Challenge{}, err
 	}
@@ -374,7 +376,6 @@ func signChallenge(hmacAlgorithm Algorithm, params ChallengeParameters, derivedK
 	}
 	return Challenge{Parameters: params, Signature: signature}, nil
 }
-
 
 // SolveChallenge attempts to solve a v2 challenge by brute-forcing the counter.
 func SolveChallenge(options SolveChallengeOptions) (*Solution, error) {

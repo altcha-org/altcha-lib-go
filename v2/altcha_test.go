@@ -28,11 +28,12 @@ func TestCreateChallengeV2(t *testing.T) {
 		if challenge.Parameters.KeyLength != defaultKeyLength {
 			t.Errorf("expected keyLength %d, got %d", defaultKeyLength, challenge.Parameters.KeyLength)
 		}
-		if challenge.Parameters.Nonce == "" {
-			t.Error("nonce should not be empty")
+		// altcha-lib uses 16 random bytes for each.
+		if got := len(challenge.Parameters.Nonce); got != 32 {
+			t.Errorf("expected 32 hex chars of nonce, got %d", got)
 		}
-		if challenge.Parameters.Salt == "" {
-			t.Error("salt should not be empty")
+		if got := len(challenge.Parameters.Salt); got != 32 {
+			t.Errorf("expected 32 hex chars of salt, got %d", got)
 		}
 		if challenge.Parameters.KeyPrefix == "" {
 			t.Error("keyPrefix should not be empty")
