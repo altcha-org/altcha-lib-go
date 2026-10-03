@@ -401,6 +401,62 @@ func TestVerifySolutionV2(t *testing.T) {
 			t.Error("solution must not verify without DeriveKey")
 		}
 	})
+
+	// Unsigned challenge with a valid solution, as an attacker could forge
+	// with their own keyPrefix/cost.
+	unsignedChallengeAndSolution := func(t *testing.T) (Challenge, Solution) {
+		t.Helper()
+		counter := 5
+		challenge, err := CreateChallenge(CreateChallengeOptions{
+			Algorithm: "PBKDF2/SHA-256",
+			Counter:   &counter,
+			DeriveKey: DeriveKeyPBKDF2(),
+			Cost:      1000,
+			KeyLength: 16,
+		})
+		if err != nil {
+			t.Fatalf("CreateChallenge() error = %v", err)
+		}
+		solution, err := SolveChallenge(SolveChallengeOptions{Challenge: challenge, DeriveKey: DeriveKeyPBKDF2()})
+		if err != nil || solution == nil {
+			t.Fatalf("SolveChallenge() = %v, %v", solution, err)
+		}
+		return challenge, *solution
+	}
+
+	t.Run("MissingSignatureSecretFailsClosed", func(t *testing.T) {
+		challenge, solution := unsignedChallengeAndSolution(t)
+		result, err := VerifySolution(VerifySolutionOptions{
+			Challenge: challenge,
+			Solution:  solution,
+			DeriveKey: DeriveKeyPBKDF2(),
+		})
+		if err == nil {
+			t.Error("expected error when HMACSignatureSecret is missing")
+		}
+		if result.Verified {
+			t.Error("challenge must not verify without HMACSignatureSecret")
+		}
+	})
+
+	t.Run("MissingSignature", func(t *testing.T) {
+		challenge, solution := unsignedChallengeAndSolution(t)
+		result, err := VerifySolution(VerifySolutionOptions{
+			Challenge:           challenge,
+			Solution:            solution,
+			DeriveKey:           DeriveKeyPBKDF2(),
+			HMACSignatureSecret: "test-secret",
+		})
+		if err != nil {
+			t.Fatalf("VerifySolution() error = %v", err)
+		}
+		if result.Verified {
+			t.Error("unsigned challenge must not verify")
+		}
+		if result.InvalidSignature == nil || !*result.InvalidSignature {
+			t.Error("expected invalidSignature=true")
+		}
+	})
 }
 
 func TestPasswordWithCounter(t *testing.T) {

@@ -420,6 +420,11 @@ func VerifySolution(options VerifySolutionOptions) (VerifySolutionResult, error)
 	startTime := time.Now()
 	result := VerifySolutionResult{}
 
+	if options.HMACSignatureSecret == "" {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, fmt.Errorf("HMACSignatureSecret is required")
+	}
+
 	params := options.Challenge.Parameters
 
 	// Check expiration
@@ -437,28 +442,30 @@ func VerifySolution(options VerifySolutionOptions) (VerifySolutionResult, error)
 	}
 
 	// Verify challenge signature
-	if options.HMACSignatureSecret != "" {
-		invalidSig := true
-		result.InvalidSignature = &invalidSig
+	invalidSig := true
+	result.InvalidSignature = &invalidSig
 
-		paramsJSON, err := canonicalJSON(params)
-		if err != nil {
-			result.Time = time.Since(startTime).Milliseconds()
-			return result, err
-		}
-		expectedSig, err := hmacHex(hmacAlgorithm, []byte(paramsJSON), options.HMACSignatureSecret)
-		if err != nil {
-			result.Time = time.Since(startTime).Milliseconds()
-			return result, err
-		}
-
-		if constantTimeEqual(expectedSig, options.Challenge.Signature) {
-			*result.InvalidSignature = false
-		} else {
-			result.Time = time.Since(startTime).Milliseconds()
-			return result, nil
-		}
+	if options.Challenge.Signature == "" {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, nil
 	}
+
+	paramsJSON, err := canonicalJSON(params)
+	if err != nil {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, err
+	}
+	expectedSig, err := hmacHex(hmacAlgorithm, []byte(paramsJSON), options.HMACSignatureSecret)
+	if err != nil {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, err
+	}
+
+	if !constantTimeEqual(expectedSig, options.Challenge.Signature) {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, nil
+	}
+	*result.InvalidSignature = false
 
 	// Fast path: verify solution via key signature (no re-derivation needed)
 	if params.KeySignature != "" && options.HMACKeySignatureSecret != "" {

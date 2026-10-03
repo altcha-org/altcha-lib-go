@@ -200,7 +200,7 @@ Verifies a submitted solution against a challenge.
 | `Challenge` | `Challenge` | The original challenge |
 | `Solution` | `Solution` | The submitted solution |
 | `DeriveKey` | `DeriveKeyFunc` | Key derivation function. Required unless the challenge has a `keySignature` and `HMACKeySignatureSecret` is set; if it is missing, `VerifySolution` returns an error |
-| `HMACSignatureSecret` | `string` | Secret used when the challenge was signed |
+| `HMACSignatureSecret` | `string` | Secret used when the challenge was signed (required; if empty, `VerifySolution` returns an error) |
 | `HMACKeySignatureSecret` | `string` | Secret used for key signature verification |
 | `HMACAlgorithm` | `Algorithm` | HMAC algorithm (`SHA-256` default) |
 
