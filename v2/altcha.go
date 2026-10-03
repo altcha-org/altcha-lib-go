@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -210,15 +211,15 @@ func bufferStartsWith(buf, prefix []byte) bool {
 }
 
 // keyPrefix is a parsed hex key prefix. Odd-length prefixes are supported:
-// the trailing hex digit is matched against the high nibble of the next byte,
-// mirroring the JS client's hex-string comparison.
+// the trailing hex digit is matched against the high nibble of the next byte.
+// Matching ignores hex case.
 type keyPrefix struct {
 	bytes     []byte
 	nibble    byte // high nibble of the byte following bytes, low nibble zero
 	hasNibble bool
 }
 
-// parseKeyPrefix decodes a hex key prefix of any length.
+// parseKeyPrefix decodes a hex key prefix of any length, in either case.
 func parseKeyPrefix(s string) (keyPrefix, error) {
 	even := len(s) &^ 1
 	b, err := hex.DecodeString(s[:even])
@@ -269,9 +270,17 @@ func CreateChallenge(options CreateChallengeOptions) (Challenge, error) {
 		keyLength = defaultKeyLength
 	}
 
-	keyPrefix := options.KeyPrefix
+	// Lowercase before signing so every client, including ones that compare
+	// odd-length prefixes as strings against the lowercase hex key, can match it.
+	keyPrefix := strings.ToLower(options.KeyPrefix)
 	if keyPrefix == "" {
 		keyPrefix = defaultKeyPrefix
+	}
+	// With a counter the prefix is derived from the key instead.
+	if options.Counter == nil {
+		if _, err := parseKeyPrefix(keyPrefix); err != nil {
+			return Challenge{}, err
+		}
 	}
 	keyPrefixLength := options.KeyPrefixLength
 	if keyPrefixLength <= 0 {

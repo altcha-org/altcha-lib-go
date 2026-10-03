@@ -171,7 +171,7 @@ Creates a new v2 challenge.
 | `HMACAlgorithm` | `Algorithm` | HMAC algorithm (`SHA-256` default) |
 | `Cost` | `int` | Work factor / iterations (required) |
 | `KeyLength` | `int` | Derived key length in bytes (default: 32) |
-| `KeyPrefix` | `string` | Expected key prefix the solver must match |
+| `KeyPrefix` | `string` | Expected key prefix the solver must match, in hex (default: `00`). Lowercased before signing; invalid hex makes `CreateChallenge` return an error |
 | `KeyPrefixLength` | `int` | Random prefix length when `Counter` is not set (default: `KeyLength/2`) |
 | `Counter` | `*int` | Deterministic counter; when set, derives the key prefix from this counter |
 | `MemoryCost` | `int` | Memory cost (Scrypt r / Argon2id KiB) |

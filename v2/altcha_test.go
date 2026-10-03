@@ -73,6 +73,34 @@ func TestCreateChallengeV2(t *testing.T) {
 		}
 	})
 
+	t.Run("KeyPrefixLowercased", func(t *testing.T) {
+		for prefix, want := range map[string]string{"A": "a", "00AA": "00aa", "0aBc": "0abc"} {
+			challenge, err := CreateChallenge(CreateChallengeOptions{
+				Algorithm:           "PBKDF2/SHA-256",
+				HMACSignatureSecret: "test-secret",
+				KeyPrefix:           prefix,
+				Cost:                1000,
+			})
+			if err != nil {
+				t.Fatalf("CreateChallenge(KeyPrefix %q) error = %v", prefix, err)
+			}
+			if got := challenge.Parameters.KeyPrefix; got != want {
+				t.Errorf("KeyPrefix %q: got %q, want %q", prefix, got, want)
+			}
+		}
+	})
+
+	t.Run("InvalidKeyPrefix", func(t *testing.T) {
+		if _, err := CreateChallenge(CreateChallengeOptions{
+			Algorithm:           "PBKDF2/SHA-256",
+			HMACSignatureSecret: "test-secret",
+			KeyPrefix:           "0g",
+			Cost:                1000,
+		}); err == nil {
+			t.Error("expected error for KeyPrefix \"0g\"")
+		}
+	})
+
 	t.Run("WithExpiresAt", func(t *testing.T) {
 		expires := time.Now().Add(10 * time.Minute)
 		challenge, err := CreateChallenge(CreateChallengeOptions{
@@ -744,7 +772,10 @@ func TestKeyPrefixMatches(t *testing.T) {
 		{"0", true},
 		{"1", false},
 		{"00a", true},
-		{"00A", true},
+		{"00A", true}, // hex case is ignored
+		{"00AA", true},
+		{"00AAb", true},
+		{"00AAc", false},
 		{"00b", false},
 		{"00aabbcc", true},
 		{"00aabbcc0", false}, // longer than the key
