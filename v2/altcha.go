@@ -53,6 +53,14 @@ type ChallengeParameters struct {
 	// cannot hold key order, so it is re-emitted verbatim while Data still
 	// matches it; see MarshalJSON.
 	rawData json.RawMessage
+
+	// rawMemoryCost, rawParallelism and rawExpiresAt hold those keys exactly
+	// as decoded by UnmarshalJSON when they decoded to zero (0 or null).
+	// omitempty would drop them, but altcha-lib signs every key it sends, so
+	// they are re-emitted while the field is still zero; see MarshalJSON.
+	rawMemoryCost  json.RawMessage
+	rawParallelism json.RawMessage
+	rawExpiresAt   json.RawMessage
 }
 
 // Solution holds the result of solving a v2 challenge.

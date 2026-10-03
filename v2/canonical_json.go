@@ -261,14 +261,18 @@ func appendJSNumber(buf []byte, n json.Number) []byte {
 	return buf
 }
 
-// UnmarshalJSON decodes the parameters and keeps the raw "data" value, so a
-// challenge created by another implementation re-encodes (and verifies) with
-// its original nested key order.
+// UnmarshalJSON decodes the parameters and keeps the raw "data" value and any
+// zero-valued memoryCost/parallelism/expiresAt, so a challenge created by
+// another implementation re-encodes (and verifies) with exactly the keys and
+// nested key order it was signed with.
 func (p *ChallengeParameters) UnmarshalJSON(b []byte) error {
 	type plain ChallengeParameters
 	var aux struct {
 		plain
-		Data json.RawMessage `json:"data"`
+		Data        json.RawMessage `json:"data"`
+		MemoryCost  json.RawMessage `json:"memoryCost"`
+		Parallelism json.RawMessage `json:"parallelism"`
+		ExpiresAt   json.RawMessage `json:"expiresAt"`
 	}
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
@@ -280,11 +284,34 @@ func (p *ChallengeParameters) UnmarshalJSON(b []byte) error {
 			return err
 		}
 	}
+	if err := decodeOptional(aux.MemoryCost, &p.MemoryCost, &p.rawMemoryCost); err != nil {
+		return err
+	}
+	if err := decodeOptional(aux.Parallelism, &p.Parallelism, &p.rawParallelism); err != nil {
+		return err
+	}
+	return decodeOptional(aux.ExpiresAt, &p.ExpiresAt, &p.rawExpiresAt)
+}
+
+// decodeOptional decodes raw into v and keeps raw in zero when it decodes to
+// the zero value, which omitempty would otherwise drop on re-encoding.
+func decodeOptional[T int | int64](raw json.RawMessage, v *T, zero *json.RawMessage) error {
+	*zero = nil
+	if raw == nil {
+		return nil
+	}
+	if err := json.Unmarshal(raw, v); err != nil {
+		return err
+	}
+	if *v == 0 {
+		*zero = raw
+	}
 	return nil
 }
 
 // MarshalJSON encodes the parameters, emitting the "data" value received by
-// UnmarshalJSON as long as Data still holds the same values.
+// UnmarshalJSON as long as Data still holds the same values, and the received
+// zero-valued memoryCost/parallelism/expiresAt as long as they are still zero.
 func (p ChallengeParameters) MarshalJSON() ([]byte, error) {
 	type plain ChallengeParameters
 	data, err := p.dataJSON()
@@ -293,8 +320,26 @@ func (p ChallengeParameters) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(struct {
 		plain
-		Data json.RawMessage `json:"data,omitempty"`
-	}{plain(p), data})
+		Data        json.RawMessage `json:"data,omitempty"`
+		MemoryCost  json.RawMessage `json:"memoryCost,omitempty"`
+		Parallelism json.RawMessage `json:"parallelism,omitempty"`
+		ExpiresAt   json.RawMessage `json:"expiresAt,omitempty"`
+	}{
+		plain(p),
+		data,
+		optionalJSON(int64(p.MemoryCost), p.rawMemoryCost),
+		optionalJSON(int64(p.Parallelism), p.rawParallelism),
+		optionalJSON(p.ExpiresAt, p.rawExpiresAt),
+	})
+}
+
+// optionalJSON encodes a non-zero v, or the zero value as received (nil, and
+// so omitted, if it was not received).
+func optionalJSON(v int64, zero json.RawMessage) json.RawMessage {
+	if v != 0 {
+		return strconv.AppendInt(nil, v, 10)
+	}
+	return zero
 }
 
 func (p ChallengeParameters) dataJSON() (json.RawMessage, error) {

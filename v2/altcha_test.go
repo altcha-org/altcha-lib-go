@@ -661,6 +661,62 @@ func TestVerifySolutionJSChallengeSignature(t *testing.T) {
 	}
 }
 
+// altcha-lib signs every parameter key it sends, including memoryCost,
+// parallelism and expiresAt set to 0 or null; decoding must not drop them.
+// Expected strings are altcha-lib canonicalJSON output.
+func TestChallengeParametersZeroValuedKeys(t *testing.T) {
+	decode := func(t *testing.T, s string) ChallengeParameters {
+		t.Helper()
+		var p ChallengeParameters
+		if err := json.Unmarshal([]byte(s), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	canonical := func(t *testing.T, p ChallengeParameters) string {
+		t.Helper()
+		s, err := canonicalJSON(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	const zero = `{"algorithm":"PBKDF2/SHA-256","nonce":"a1","salt":"b2","cost":1000,"keyLength":32,"keyPrefix":"00","memoryCost":0,"parallelism":null,"expiresAt":0}`
+
+	t.Run("Kept", func(t *testing.T) {
+		const want = `{"algorithm":"PBKDF2/SHA-256","cost":1000,"expiresAt":0,"keyLength":32,"keyPrefix":"00","memoryCost":0,"nonce":"a1","parallelism":null,"salt":"b2"}`
+		p := decode(t, zero)
+		if got := canonical(t, p); got != want {
+			t.Errorf("got  %s\nwant %s", got, want)
+		}
+		// A Go JSON round trip (e.g. storing the challenge) must keep them too.
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := canonical(t, decode(t, string(b))); got != want {
+			t.Errorf("after round trip got  %s\nwant %s", got, want)
+		}
+	})
+
+	t.Run("Changed", func(t *testing.T) {
+		const want = `{"algorithm":"PBKDF2/SHA-256","cost":1000,"expiresAt":4102444800,"keyLength":32,"keyPrefix":"00","memoryCost":5,"nonce":"a1","parallelism":2,"salt":"b2"}`
+		p := decode(t, zero)
+		p.MemoryCost, p.Parallelism, p.ExpiresAt = 5, 2, 4102444800
+		if got := canonical(t, p); got != want {
+			t.Errorf("got  %s\nwant %s", got, want)
+		}
+	})
+
+	t.Run("AbsentStaysAbsent", func(t *testing.T) {
+		const want = `{"algorithm":"PBKDF2/SHA-256","cost":1000,"keyLength":32,"keyPrefix":"00","nonce":"a1","salt":"b2"}`
+		p := decode(t, `{"algorithm":"PBKDF2/SHA-256","nonce":"a1","salt":"b2","cost":1000,"keyLength":32,"keyPrefix":"00"}`)
+		if got := canonical(t, p); got != want {
+			t.Errorf("got  %s\nwant %s", got, want)
+		}
+	})
+}
+
 func TestBufferStartsWith(t *testing.T) {
 	buf, _ := hex.DecodeString("00aabbcc")
 	prefix, _ := hex.DecodeString("00aa")
