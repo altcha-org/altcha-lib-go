@@ -338,7 +338,8 @@ func CreateChallenge(options CreateChallengeOptions) (Challenge, error) {
 			return Challenge{}, err
 		}
 		derivedKey = dk
-		params.KeyPrefix = hex.EncodeToString(derivedKey[:keyPrefixLength])
+		// Clamp like JS slice(): a prefix longer than the key is the whole key.
+		params.KeyPrefix = hex.EncodeToString(derivedKey[:min(keyPrefixLength, len(derivedKey))])
 	}
 
 	return signChallenge(options.HMACAlgorithm, params, derivedKey, options.HMACSignatureSecret, options.HMACKeySignatureSecret)

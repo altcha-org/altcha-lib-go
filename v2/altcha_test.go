@@ -90,6 +90,25 @@ func TestCreateChallengeV2(t *testing.T) {
 		}
 	})
 
+	t.Run("KeyPrefixLengthClamped", func(t *testing.T) {
+		counter := 5
+		challenge, err := CreateChallenge(CreateChallengeOptions{
+			Algorithm:           "PBKDF2/SHA-256",
+			HMACSignatureSecret: "test-secret",
+			Counter:             &counter,
+			DeriveKey:           DeriveKeyPBKDF2(),
+			Cost:                1000,
+			KeyLength:           32,
+			KeyPrefixLength:     64,
+		})
+		if err != nil {
+			t.Fatalf("CreateChallenge() error = %v", err)
+		}
+		if got := len(challenge.Parameters.KeyPrefix); got != 64 {
+			t.Errorf("keyPrefix should be the whole 32-byte key (64 hex chars), got %d chars", got)
+		}
+	})
+
 	t.Run("KeyPrefixLowercased", func(t *testing.T) {
 		for prefix, want := range map[string]string{"A": "a", "00AA": "00aa", "0aBc": "0abc"} {
 			challenge, err := CreateChallenge(CreateChallengeOptions{
