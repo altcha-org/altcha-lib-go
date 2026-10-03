@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -83,11 +84,33 @@ type Payload struct {
 // DeriveKeyFunc is a function that derives a key from KDF parameters.
 type DeriveKeyFunc func(params ChallengeParameters, salt []byte, password []byte) ([]byte, error)
 
+// CounterMode selects how the counter is appended to the nonce to form the
+// key derivation password.
+type CounterMode string
+
+const (
+	// CounterModeUint32 appends the counter as a big-endian uint32 (v2 default).
+	CounterModeUint32 CounterMode = "uint32"
+	// CounterModeString appends the counter as a decimal string, for
+	// backward compatibility with v1.
+	CounterModeString CounterMode = "string"
+)
+
+// validate rejects unknown modes; the zero value means CounterModeUint32.
+func (m CounterMode) validate() error {
+	switch m {
+	case "", CounterModeUint32, CounterModeString:
+		return nil
+	}
+	return fmt.Errorf("unsupported CounterMode %q", string(m))
+}
+
 // CreateChallengeOptions configures challenge creation.
 type CreateChallengeOptions struct {
 	Algorithm              string
 	Cost                   int
 	Counter                *int
+	CounterMode            CounterMode // default: CounterModeUint32
 	Data                   map[string]interface{}
 	DeriveKey              DeriveKeyFunc
 	ExpiresAt              *time.Time
@@ -104,6 +127,7 @@ type CreateChallengeOptions struct {
 // SolveChallengeOptions configures challenge solving.
 type SolveChallengeOptions struct {
 	Challenge    Challenge
+	CounterMode  CounterMode // default: CounterModeUint32
 	CounterStart int
 	CounterStep  int
 	DeriveKey    DeriveKeyFunc
@@ -117,6 +141,7 @@ type SolveChallengeOptions struct {
 type VerifySolutionOptions struct {
 	Challenge              Challenge
 	Solution               Solution
+	CounterMode            CounterMode // default: CounterModeUint32
 	DeriveKey              DeriveKeyFunc
 	HMACAlgorithm          Algorithm
 	HMACKeySignatureSecret string
@@ -132,8 +157,15 @@ type VerifySolutionResult struct {
 	Verified         bool
 }
 
-// passwordWithCounter returns nonce with the counter appended as a big-endian uint32.
-func passwordWithCounter(nonce []byte, n int) []byte {
+// passwordWithCounter returns nonce with the counter appended as mode
+// specifies (a valid mode; see CounterMode.validate).
+func passwordWithCounter(nonce []byte, n int, mode CounterMode) []byte {
+	if mode == CounterModeString {
+		// Room for the longest int64, "-9223372036854775808".
+		buf := make([]byte, len(nonce), len(nonce)+20)
+		copy(buf, nonce)
+		return strconv.AppendInt(buf, int64(n), 10)
+	}
 	buf := make([]byte, len(nonce)+4)
 	copy(buf, nonce)
 	binary.BigEndian.PutUint32(buf[len(nonce):], uint32(n))
@@ -270,6 +302,9 @@ func CreateChallenge(options CreateChallengeOptions) (Challenge, error) {
 	if options.Counter != nil && options.DeriveKey == nil {
 		return Challenge{}, fmt.Errorf("DeriveKey function is required when Counter is set")
 	}
+	if err := options.CounterMode.validate(); err != nil {
+		return Challenge{}, err
+	}
 
 	keyLength := options.KeyLength
 	if keyLength <= 0 {
@@ -338,7 +373,7 @@ func CreateChallenge(options CreateChallengeOptions) (Challenge, error) {
 		if err != nil {
 			return Challenge{}, fmt.Errorf("invalid nonce hex: %w", err)
 		}
-		password := passwordWithCounter(nonceBytes2, *options.Counter)
+		password := passwordWithCounter(nonceBytes2, *options.Counter, options.CounterMode)
 		dk, err := options.DeriveKey(params, saltBytes2, password)
 		if err != nil {
 			return Challenge{}, err
@@ -386,6 +421,9 @@ func SolveChallenge(options SolveChallengeOptions) (*Solution, error) {
 	if options.DeriveKey == nil {
 		return nil, fmt.Errorf("DeriveKey function is required")
 	}
+	if err := options.CounterMode.validate(); err != nil {
+		return nil, err
+	}
 
 	counterStep := options.CounterStep
 	if counterStep <= 0 {
@@ -427,7 +465,7 @@ func SolveChallenge(options SolveChallengeOptions) (*Solution, error) {
 			return nil, nil
 		}
 
-		password := passwordWithCounter(nonceBytes, n)
+		password := passwordWithCounter(nonceBytes, n, options.CounterMode)
 		derivedKey, err := options.DeriveKey(params, saltBytes, password)
 		if err != nil {
 			return nil, err
@@ -463,6 +501,10 @@ func VerifySolution(options VerifySolutionOptions) (VerifySolutionResult, error)
 	if options.HMACSignatureSecret == "" {
 		result.Time = time.Since(startTime).Milliseconds()
 		return result, fmt.Errorf("HMACSignatureSecret is required")
+	}
+	if err := options.CounterMode.validate(); err != nil {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, err
 	}
 
 	params := options.Challenge.Parameters
@@ -549,7 +591,7 @@ func VerifySolution(options VerifySolutionOptions) (VerifySolutionResult, error)
 		result.Time = time.Since(startTime).Milliseconds()
 		return result, fmt.Errorf("invalid nonce hex: %w", err)
 	}
-	password := passwordWithCounter(nonceBytes, options.Solution.Counter)
+	password := passwordWithCounter(nonceBytes, options.Solution.Counter, options.CounterMode)
 	derivedKey, err := options.DeriveKey(params, saltBytes, password)
 	if err != nil {
 		result.Time = time.Since(startTime).Milliseconds()

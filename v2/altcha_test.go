@@ -374,6 +374,47 @@ func TestSolveChallengeV2(t *testing.T) {
 			t.Errorf("expected solution at counter 2, got %+v", solution)
 		}
 	})
+
+	// Produced by altcha-lib createChallenge/solveChallenge with
+	// counterMode: 'string', counter: 7.
+	t.Run("CounterModeStringJSFixture", func(t *testing.T) {
+		var challenge Challenge
+		if err := json.Unmarshal([]byte(`{"parameters":{"algorithm":"PBKDF2/SHA-256","cost":1000,"keyLength":16,"keyPrefix":"05e08939dfef7e3a","nonce":"f6ca49b23c852cf5a09215fe98e3e287","salt":"90d740e8a997211b35010a7a3dc7f582"},"signature":"adeff6d621b8a895dbb5fde15a80cf589485259325e2f3e67ad80b25a8030356"}`), &challenge); err != nil {
+			t.Fatal(err)
+		}
+		const derivedKey = "05e08939dfef7e3a319e666558382725"
+		deriveKey := DeriveKeyPBKDF2()
+
+		solution, err := SolveChallenge(SolveChallengeOptions{Challenge: challenge, DeriveKey: deriveKey, CounterMode: CounterModeString})
+		if err != nil || solution == nil {
+			t.Fatalf("SolveChallenge() = %v, %v", solution, err)
+		}
+		if solution.Counter != 7 || solution.DerivedKey != derivedKey {
+			t.Errorf("got counter %d key %s, want 7 %s", solution.Counter, solution.DerivedKey, derivedKey)
+		}
+
+		for mode, want := range map[CounterMode]bool{CounterModeString: true, CounterModeUint32: false} {
+			result, err := VerifySolution(VerifySolutionOptions{
+				Challenge:           challenge,
+				Solution:            Solution{Counter: 7, DerivedKey: derivedKey},
+				CounterMode:         mode,
+				DeriveKey:           deriveKey,
+				HMACSignatureSecret: "test-secret",
+			})
+			if err != nil {
+				t.Fatalf("VerifySolution(%s) error = %v", mode, err)
+			}
+			if result.Verified != want {
+				t.Errorf("VerifySolution(%s) verified = %v, want %v", mode, result.Verified, want)
+			}
+		}
+	})
+
+	t.Run("UnknownCounterMode", func(t *testing.T) {
+		if _, err := SolveChallenge(SolveChallengeOptions{Challenge: unsolvable(t), DeriveKey: DeriveKeyPBKDF2(), CounterMode: "uint64"}); err == nil {
+			t.Error("expected error for unknown CounterMode")
+		}
+	})
 }
 
 func TestVerifySolutionV2(t *testing.T) {
@@ -647,16 +688,26 @@ func TestVerifySolutionV2(t *testing.T) {
 }
 
 func TestPasswordWithCounter(t *testing.T) {
-	result := passwordWithCounter([]byte("nonce"), 1)
-	expected := append([]byte("nonce"), 0, 0, 0, 1)
-	if string(result) != string(expected) {
-		t.Errorf("got %v, want %v", result, expected)
+	nonce := []byte("nonce")
+	cases := []struct {
+		n    int
+		mode CounterMode
+		want []byte
+	}{
+		{1, "", append([]byte("nonce"), 0, 0, 0, 1)},
+		{256, CounterModeUint32, append([]byte("nonce"), 0, 0, 1, 0)},
+		{-1, CounterModeUint32, append([]byte("nonce"), 0xff, 0xff, 0xff, 0xff)},
+		{256, CounterModeString, []byte("nonce256")},
+		{0, CounterModeString, []byte("nonce0")},
+		{-5, CounterModeString, []byte("nonce-5")},
 	}
-
-	result = passwordWithCounter([]byte("nonce"), 256)
-	expected = append([]byte("nonce"), 0, 0, 1, 0)
-	if string(result) != string(expected) {
-		t.Errorf("got %v, want %v", result, expected)
+	for _, c := range cases {
+		if got := passwordWithCounter(nonce, c.n, c.mode); string(got) != string(c.want) {
+			t.Errorf("passwordWithCounter(%d, %q) = %v, want %v", c.n, c.mode, got, c.want)
+		}
+	}
+	if string(nonce) != "nonce" {
+		t.Errorf("nonce modified: %q", nonce)
 	}
 }
 

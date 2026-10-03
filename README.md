@@ -174,6 +174,7 @@ Creates a new v2 challenge.
 | `KeyPrefix` | `string` | Expected key prefix the solver must match, in hex (default: `00`). Lowercased before signing; invalid hex makes `CreateChallenge` return an error |
 | `KeyPrefixLength` | `int` | Random prefix length when `Counter` is not set (default: `KeyLength/2`) |
 | `Counter` | `*int` | Deterministic counter; when set, derives the key prefix from this counter |
+| `CounterMode` | `CounterMode` | How the counter is appended to the nonce: `CounterModeUint32` (default, big-endian uint32) or `CounterModeString` (decimal string, for v1 compatibility). Solver and verifier must use the same mode |
 | `MemoryCost` | `int` | Memory cost (Scrypt r / Argon2id KiB) |
 | `Parallelism` | `int` | Parallelism (Scrypt p / Argon2id threads) |
 | `ExpiresAt` | `*time.Time` | Optional challenge expiry |
@@ -188,6 +189,7 @@ Brute-forces counter values until the derived key matches the challenge prefix. 
 | `Challenge` | `Challenge` | The challenge to solve |
 | `DeriveKey` | `DeriveKeyFunc` | Key derivation function (must match the one used to create the challenge) |
 | `CounterStart` | `int` | Starting counter value (default: 0) |
+| `CounterMode` | `CounterMode` | Counter encoding (default: `CounterModeUint32`); must match the mode the challenge was created with |
 | `CounterStep` | `int` | Counter increment per iteration (default: 1) |
 | `StopChan` | `<-chan struct{}` | Optional channel to abort solving |
 | `Timeout` | `time.Duration` | Maximum solving time (default: 90s); negative disables it |
@@ -201,6 +203,7 @@ Verifies a submitted solution against a challenge.
 | `Challenge` | `Challenge` | The original challenge |
 | `Solution` | `Solution` | The submitted solution |
 | `DeriveKey` | `DeriveKeyFunc` | Key derivation function. Required unless the challenge has a `keySignature` and `HMACKeySignatureSecret` is set; if it is missing, `VerifySolution` returns an error |
+| `CounterMode` | `CounterMode` | Counter encoding (default: `CounterModeUint32`); must match the mode the challenge was created with |
 | `HMACSignatureSecret` | `string` | Secret used when the challenge was signed (required; if empty, `VerifySolution` returns an error) |
 | `HMACKeySignatureSecret` | `string` | Secret used for key signature verification |
 | `HMACAlgorithm` | `Algorithm` | HMAC algorithm (`SHA-256` default) |
