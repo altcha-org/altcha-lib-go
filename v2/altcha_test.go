@@ -73,6 +73,23 @@ func TestCreateChallengeV2(t *testing.T) {
 		}
 	})
 
+	t.Run("UnsignedHasNoKeySignature", func(t *testing.T) {
+		counter := 5
+		challenge, err := CreateChallenge(CreateChallengeOptions{
+			Algorithm:              "PBKDF2/SHA-256",
+			HMACKeySignatureSecret: "key-secret",
+			Counter:                &counter,
+			DeriveKey:              DeriveKeyPBKDF2(),
+			Cost:                   1000,
+		})
+		if err != nil {
+			t.Fatalf("CreateChallenge() error = %v", err)
+		}
+		if challenge.Signature != "" || challenge.Parameters.KeySignature != "" {
+			t.Errorf("unsigned challenge should have no signature or keySignature, got %q / %q", challenge.Signature, challenge.Parameters.KeySignature)
+		}
+	})
+
 	t.Run("KeyPrefixLowercased", func(t *testing.T) {
 		for prefix, want := range map[string]string{"A": "a", "00AA": "00aa", "0aBc": "0abc"} {
 			challenge, err := CreateChallenge(CreateChallengeOptions{

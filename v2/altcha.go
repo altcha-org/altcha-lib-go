@@ -344,14 +344,15 @@ func CreateChallenge(options CreateChallengeOptions) (Challenge, error) {
 	return signChallenge(options.HMACAlgorithm, params, derivedKey, options.HMACSignatureSecret, options.HMACKeySignatureSecret)
 }
 
-// signChallenge signs challenge parameters and returns a Challenge.
+// signChallenge signs challenge parameters and returns a Challenge. Without
+// hmacSecret the challenge is returned unsigned, without a keySignature either
+// (as in altcha-lib): VerifySolution would reject it for the missing signature.
 func signChallenge(hmacAlgorithm Algorithm, params ChallengeParameters, derivedKey []byte, hmacSecret string, hmacKeySecret string) (Challenge, error) {
+	if hmacSecret == "" {
+		return Challenge{Parameters: params}, nil
+	}
 	if hmacAlgorithm == "" {
 		hmacAlgorithm = SHA256
-	}
-
-	challenge := Challenge{
-		Parameters: params,
 	}
 
 	if len(derivedKey) > 0 && hmacKeySecret != "" {
@@ -359,22 +360,18 @@ func signChallenge(hmacAlgorithm Algorithm, params ChallengeParameters, derivedK
 		if err != nil {
 			return Challenge{}, err
 		}
-		challenge.Parameters.KeySignature = keySignature
+		params.KeySignature = keySignature
 	}
 
-	if hmacSecret != "" {
-		paramsJSON, err := canonicalJSON(challenge.Parameters)
-		if err != nil {
-			return Challenge{}, err
-		}
-		signature, err := hmacHex(hmacAlgorithm, []byte(paramsJSON), hmacSecret)
-		if err != nil {
-			return Challenge{}, err
-		}
-		challenge.Signature = signature
+	paramsJSON, err := canonicalJSON(params)
+	if err != nil {
+		return Challenge{}, err
 	}
-
-	return challenge, nil
+	signature, err := hmacHex(hmacAlgorithm, []byte(paramsJSON), hmacSecret)
+	if err != nil {
+		return Challenge{}, err
+	}
+	return Challenge{Parameters: params, Signature: signature}, nil
 }
 
 
