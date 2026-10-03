@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand/v2"
 	"net/http"
+	"time"
 
 	altcha "github.com/altcha-org/altcha-lib-go/v2"
 )
@@ -42,12 +43,17 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// challengeTTL bounds how long a challenge (and so a solved payload) is
+// accepted. It must cover solving plus the time to fill in the form.
+const challengeTTL = 10 * time.Minute
+
 // handleChallenge returns a new ALTCHA v2 challenge in deterministic mode.
 // A random counter in [5000, 10000) is chosen.
 func handleChallenge(hmacSecret string, hmacKeySecret string) http.HandlerFunc {
 	deriveKey := altcha.DeriveKeyPBKDF2()
 	return func(w http.ResponseWriter, r *http.Request) {
 		counter := 5000 + rand.IntN(5000)
+		expiresAt := time.Now().Add(challengeTTL)
 		challenge, err := altcha.CreateChallenge(altcha.CreateChallengeOptions{
 			Algorithm:              "PBKDF2/SHA-256",
 			DeriveKey:              deriveKey,
@@ -56,6 +62,7 @@ func handleChallenge(hmacSecret string, hmacKeySecret string) http.HandlerFunc {
 			Cost:                   5000,
 			KeyLength:              32,
 			Counter:                &counter,
+			ExpiresAt:              &expiresAt,
 		})
 		if err != nil {
 			http.Error(w, "failed to create challenge", http.StatusInternalServerError)
