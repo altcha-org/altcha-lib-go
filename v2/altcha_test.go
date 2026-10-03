@@ -377,7 +377,7 @@ func TestVerifySolutionV2(t *testing.T) {
 		}
 	})
 
-	t.Run("SignatureOnlyVerification", func(t *testing.T) {
+	t.Run("MissingDeriveKeyFailsClosed", func(t *testing.T) {
 		challenge, err := CreateChallenge(CreateChallengeOptions{
 			Algorithm:           "PBKDF2/SHA-256",
 			HMACSignatureSecret: "test-secret",
@@ -387,20 +387,18 @@ func TestVerifySolutionV2(t *testing.T) {
 			t.Fatalf("CreateChallenge() error = %v", err)
 		}
 
-		// Verify with signature only, no DeriveKey
+		// Valid signature, bogus solution, no DeriveKey and no key-signature path:
+		// the solution cannot be checked, so verification must not pass.
 		result, err := VerifySolution(VerifySolutionOptions{
 			Challenge:           challenge,
-			Solution:            Solution{},
+			Solution:            Solution{Counter: 0, DerivedKey: "garbage"},
 			HMACSignatureSecret: "test-secret",
 		})
-		if err != nil {
-			t.Fatalf("VerifySolution() error = %v", err)
+		if err == nil {
+			t.Error("expected error when DeriveKey is missing")
 		}
-		if !result.Verified {
-			t.Error("signature-only verification should pass")
-		}
-		if result.InvalidSolution != nil {
-			t.Error("invalidSolution should be nil when DeriveKey is not provided")
+		if result.Verified {
+			t.Error("solution must not verify without DeriveKey")
 		}
 	})
 }
@@ -492,7 +490,14 @@ func TestVerifySolutionJSChallengeSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := VerifySolution(VerifySolutionOptions{Challenge: challenge, HMACSignatureSecret: "secret"})
+	deriveKey := DeriveKeyPBKDF2()
+	solution, err := SolveChallenge(SolveChallengeOptions{Challenge: challenge, DeriveKey: deriveKey})
+	if err != nil || solution == nil {
+		t.Fatalf("SolveChallenge() = %v, %v", solution, err)
+	}
+	verifyOptions := VerifySolutionOptions{Challenge: challenge, Solution: *solution, DeriveKey: deriveKey, HMACSignatureSecret: "secret"}
+
+	result, err := VerifySolution(verifyOptions)
 	if err != nil {
 		t.Fatalf("VerifySolution() error = %v", err)
 	}
@@ -501,13 +506,13 @@ func TestVerifySolutionJSChallengeSignature(t *testing.T) {
 	}
 
 	// Changing Data after decoding must be reflected, not masked by the received bytes.
-	challenge.Parameters.Data["z"] = "changed"
-	result, err = VerifySolution(VerifySolutionOptions{Challenge: challenge, HMACSignatureSecret: "secret"})
+	verifyOptions.Challenge.Parameters.Data["z"] = "changed"
+	result, err = VerifySolution(verifyOptions)
 	if err != nil {
 		t.Fatalf("VerifySolution() error = %v", err)
 	}
-	if result.Verified {
-		t.Error("modified data should not verify")
+	if result.Verified || result.InvalidSignature == nil || !*result.InvalidSignature {
+		t.Errorf("modified data should fail the signature check, got %+v", result)
 	}
 }
 

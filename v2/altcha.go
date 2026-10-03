@@ -484,44 +484,42 @@ func VerifySolution(options VerifySolutionOptions) (VerifySolutionResult, error)
 	}
 
 	// Slow path: re-derive and compare
-	if options.DeriveKey != nil {
-		invalidSol := true
-		result.InvalidSolution = &invalidSol
+	if options.DeriveKey == nil {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, fmt.Errorf("DeriveKey function is required")
+	}
 
-		saltBytes, err := hex.DecodeString(params.Salt)
-		if err != nil {
-			result.Time = time.Since(startTime).Milliseconds()
-			return result, fmt.Errorf("invalid salt hex: %w", err)
-		}
-		nonceBytes, err := hex.DecodeString(params.Nonce)
-		if err != nil {
-			result.Time = time.Since(startTime).Milliseconds()
-			return result, fmt.Errorf("invalid nonce hex: %w", err)
-		}
-		password := passwordWithCounter(nonceBytes, options.Solution.Counter)
-		derivedKey, err := options.DeriveKey(params, saltBytes, password)
-		if err != nil {
-			result.Time = time.Since(startTime).Milliseconds()
-			return result, err
-		}
+	invalidSol := true
+	result.InvalidSolution = &invalidSol
 
-		expectedDerivedKey := hex.EncodeToString(derivedKey)
+	saltBytes, err := hex.DecodeString(params.Salt)
+	if err != nil {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, fmt.Errorf("invalid salt hex: %w", err)
+	}
+	nonceBytes, err := hex.DecodeString(params.Nonce)
+	if err != nil {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, fmt.Errorf("invalid nonce hex: %w", err)
+	}
+	password := passwordWithCounter(nonceBytes, options.Solution.Counter)
+	derivedKey, err := options.DeriveKey(params, saltBytes, password)
+	if err != nil {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, err
+	}
 
-		prefix, err := parseKeyPrefix(params.KeyPrefix)
-		if err != nil {
-			result.Time = time.Since(startTime).Milliseconds()
-			return result, err
-		}
+	expectedDerivedKey := hex.EncodeToString(derivedKey)
 
-		if constantTimeEqual(expectedDerivedKey, options.Solution.DerivedKey) && prefix.matches(derivedKey) {
-			*result.InvalidSolution = false
-			result.Verified = true
-		}
-	} else {
-		// No DeriveKey and no key signature — verify by signature only
-		if result.InvalidSignature != nil && !*result.InvalidSignature {
-			result.Verified = true
-		}
+	prefix, err := parseKeyPrefix(params.KeyPrefix)
+	if err != nil {
+		result.Time = time.Since(startTime).Milliseconds()
+		return result, err
+	}
+
+	if constantTimeEqual(expectedDerivedKey, options.Solution.DerivedKey) && prefix.matches(derivedKey) {
+		*result.InvalidSolution = false
+		result.Verified = true
 	}
 
 	result.Time = time.Since(startTime).Milliseconds()
