@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -403,6 +404,39 @@ func TestVerifySolutionV2(t *testing.T) {
 		}
 		if result.InvalidSolution != nil && *result.InvalidSolution {
 			t.Error("solution should be valid")
+		}
+	})
+
+	t.Run("MalformedDerivedKeyFastPath", func(t *testing.T) {
+		counter := 5
+		challenge, err := CreateChallenge(CreateChallengeOptions{
+			Algorithm:              "PBKDF2/SHA-256",
+			HMACSignatureSecret:    "test-secret",
+			HMACKeySignatureSecret: "key-secret",
+			Counter:                &counter,
+			DeriveKey:              DeriveKeyPBKDF2(),
+			Cost:                   1000,
+			KeyLength:              16,
+		})
+		if err != nil {
+			t.Fatalf("CreateChallenge() error = %v", err)
+		}
+
+		for _, derivedKey := range []string{strings.Repeat("zz", 16), "abc"} {
+			t.Run(derivedKey, func(t *testing.T) {
+				result, err := VerifySolution(VerifySolutionOptions{
+					Challenge:              challenge,
+					Solution:               Solution{Counter: counter, DerivedKey: derivedKey},
+					HMACSignatureSecret:    "test-secret",
+					HMACKeySignatureSecret: "key-secret",
+				})
+				if err != nil {
+					t.Fatalf("VerifySolution() error = %v", err)
+				}
+				if result.Verified || result.InvalidSolution == nil || !*result.InvalidSolution {
+					t.Errorf("expected invalidSolution=true, got %+v", result)
+				}
+			})
 		}
 	})
 

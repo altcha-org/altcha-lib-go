@@ -482,10 +482,12 @@ func VerifySolution(options VerifySolutionOptions) (VerifySolutionResult, error)
 		invalidSol := true
 		result.InvalidSolution = &invalidSol
 
+		// Malformed hex is attacker input, not a server error: it can never
+		// match, so report an invalid solution.
 		derivedKeyBytes, err := hex.DecodeString(options.Solution.DerivedKey)
 		if err != nil {
 			result.Time = time.Since(startTime).Milliseconds()
-			return result, fmt.Errorf("invalid derived key hex: %w", err)
+			return result, nil
 		}
 		expectedKeySig, err := hmacHex(hmacAlgorithm, derivedKeyBytes, options.HMACKeySignatureSecret)
 		if err != nil {
