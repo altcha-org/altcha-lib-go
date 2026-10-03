@@ -171,8 +171,8 @@ Creates a new v2 challenge.
 | `HMACAlgorithm` | `Algorithm` | HMAC algorithm (`SHA-256` default) |
 | `Cost` | `int` | Work factor / iterations (required) |
 | `KeyLength` | `int` | Derived key length in bytes (default: 32) |
-| `KeyPrefix` | `string` | Expected key prefix the solver must match, in hex (default: `00`). Lowercased before signing; invalid hex makes `CreateChallenge` return an error |
-| `KeyPrefixLength` | `int` | Random prefix length when `Counter` is not set (default: `KeyLength/2`) |
+| `KeyPrefix` | `string` | Expected key prefix the solver must match, in hex (default: `00`). Ignored when `Counter` is set. Lowercased before signing; invalid hex makes `CreateChallenge` return an error |
+| `KeyPrefixLength` | `int` | Length in bytes of the key prefix derived when `Counter` is set (default: `KeyLength/2`; capped at the derived key length) |
 | `Counter` | `*int` | Deterministic counter; when set, derives the key prefix from this counter |
 | `CounterMode` | `CounterMode` | How the counter is appended to the nonce: `CounterModeUint32` (default, big-endian uint32) or `CounterModeString` (decimal string, for v1 compatibility). Solver and verifier must use the same mode |
 | `MemoryCost` | `int` | Memory cost (Scrypt r / Argon2id KiB) |
