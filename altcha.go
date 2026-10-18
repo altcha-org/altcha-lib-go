@@ -104,6 +104,15 @@ type ServerSignatureVerificationData struct {
 	Extra map[string]interface{} `json:"-"`
 }
 
+// VerifySolutionResult holds the outcome of VerifySolutionWithResult.
+type VerifySolutionResult struct {
+	// Expired is true when expiry checking is enabled and the payload's
+	// "expires" parameter is in the past. Verified is always false then.
+	Expired bool
+	// Verified is true when the solution and its signature match.
+	Verified bool
+}
+
 // Solution holds the result of solving a challenge.
 type Solution struct {
 	Number int
@@ -210,38 +219,39 @@ func getExpectedChallenge(hmacKey string, parsedPayload Payload) (Challenge, err
 	return expectedChallenge, nil
 }
 
-// Parse Payload
-func parsePayload(payload interface{}, checkExpires bool) (Payload, error) {
+// Parse Payload. expired is true when checkExpires is set and the payload's
+// "expires" parameter is in the past; the returned Payload is then empty.
+func parsePayload(payload interface{}, checkExpires bool) (parsed Payload, expired bool, err error) {
 	var parsedPayload Payload
 
 	switch v := payload.(type) {
 	case string:
 		decoded, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
-			return Payload{}, err
+			return Payload{}, false, err
 		}
 		err = json.Unmarshal(decoded, &parsedPayload)
 		if err != nil {
-			return Payload{}, err
+			return Payload{}, false, err
 		}
 	case Payload:
 		parsedPayload = v
 	case []byte:
 		err := json.Unmarshal(v, &parsedPayload)
 		if err != nil {
-			return Payload{}, err
+			return Payload{}, false, err
 		}
 	case map[string]interface{}:
 		jsonBytes, err := json.Marshal(v)
 		if err != nil {
-			return Payload{}, err
+			return Payload{}, false, err
 		}
 		err = json.Unmarshal(jsonBytes, &parsedPayload)
 		if err != nil {
-			return Payload{}, err
+			return Payload{}, false, err
 		}
 	default:
-		return Payload{}, fmt.Errorf("unsupported payload type: %T", v)
+		return Payload{}, false, fmt.Errorf("unsupported payload type: %T", v)
 	}
 
 	params := ExtractParams(parsedPayload)
@@ -249,13 +259,13 @@ func parsePayload(payload interface{}, checkExpires bool) (Payload, error) {
 	if checkExpires && expires != "" {
 		expireTime, err := strconv.ParseInt(expires, 10, 64)
 		if err != nil {
-			return Payload{}, err
+			return Payload{}, false, err
 		}
 		if time.Now().Unix() > expireTime {
-			return Payload{}, nil
+			return Payload{}, true, nil
 		}
 	}
-	return parsedPayload, nil
+	return parsedPayload, false, nil
 }
 
 // Parse server signature payload and its verification data
@@ -417,10 +427,12 @@ func CreateChallenge(options ChallengeOptions) (Challenge, error) {
 	}, nil
 }
 
-// Verifies the solution provided by the client
+// Verifies the solution provided by the client.
+// An expired payload (with checkExpires) returns (false, nil), the same as an
+// invalid solution; use VerifySolutionWithResult to distinguish the two.
 func VerifySolution(payload interface{}, hmacKey string, checkExpires bool) (bool, error) {
-	parsedPayload, err := parsePayload(payload, checkExpires)
-	if err != nil {
+	parsedPayload, expired, err := parsePayload(payload, checkExpires)
+	if err != nil || expired {
 		return false, err
 	}
 
@@ -432,19 +444,35 @@ func VerifySolution(payload interface{}, hmacKey string, checkExpires bool) (boo
 	return expectedChallenge.Challenge == parsedPayload.Challenge && expectedChallenge.Signature == parsedPayload.Signature, nil
 }
 
-// Verifies the solution provided by the client using constant-time comparison
+// Verifies the solution provided by the client using constant-time comparison.
+// An expired payload (with checkExpires) returns (false, nil), the same as an
+// invalid solution; use VerifySolutionWithResult to distinguish the two.
 func VerifySolutionSafe(payload interface{}, hmacKey string, checkExpires bool) (bool, error) {
-	parsedPayload, err := parsePayload(payload, checkExpires)
+	result, err := VerifySolutionWithResult(payload, hmacKey, checkExpires)
+	return result.Verified, err
+}
+
+// VerifySolutionWithResult verifies the solution provided by the client using
+// constant-time comparison and reports whether the payload was rejected
+// because it expired. Errors are returned only for malformed payloads or
+// unsupported algorithms, never for expiry or a wrong solution.
+func VerifySolutionWithResult(payload interface{}, hmacKey string, checkExpires bool) (VerifySolutionResult, error) {
+	parsedPayload, expired, err := parsePayload(payload, checkExpires)
 	if err != nil {
-		return false, err
+		return VerifySolutionResult{}, err
+	}
+	if expired {
+		return VerifySolutionResult{Expired: true}, nil
 	}
 
 	expectedChallenge, err := getExpectedChallenge(hmacKey, parsedPayload)
 	if err != nil {
-		return false, err
+		return VerifySolutionResult{}, err
 	}
 
-	return secureCompare(expectedChallenge.Challenge, parsedPayload.Challenge) && secureCompare(expectedChallenge.Signature, parsedPayload.Signature), nil
+	return VerifySolutionResult{
+		Verified: secureCompare(expectedChallenge.Challenge, parsedPayload.Challenge) && secureCompare(expectedChallenge.Signature, parsedPayload.Signature),
+	}, nil
 }
 
 // Extracts parameters from the payload

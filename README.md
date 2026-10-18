@@ -267,6 +267,12 @@ challenge, err := altcha.CreateChallenge(altcha.ChallengeOptions{
 })
 
 ok, err := altcha.VerifySolution(payload, "secret", true)
+
+// Distinguish an expired challenge from an invalid solution:
+result, err := altcha.VerifySolutionWithResult(payload, "secret", true)
+if result.Expired {
+    // ask the client to fetch a new challenge
+}
 ```
 
 ## License

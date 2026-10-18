@@ -252,6 +252,55 @@ func TestVerifySolutionSafe(t *testing.T) {
 	}
 }
 
+func TestVerifySolutionWithResult(t *testing.T) {
+	newPayload := func(t *testing.T, expires time.Time, number int64) Payload {
+		t.Helper()
+		var challengeNumber int64 = 10
+		challenge, err := CreateChallenge(ChallengeOptions{
+			HMACKey:   "test-key",
+			Algorithm: SHA256,
+			Expires:   &expires,
+			Number:    &challengeNumber,
+		})
+		if err != nil {
+			t.Fatalf("CreateChallenge() error = %v", err)
+		}
+		return Payload{
+			Algorithm: challenge.Algorithm,
+			Challenge: challenge.Challenge,
+			Number:    number,
+			Salt:      challenge.Salt,
+			Signature: challenge.Signature,
+		}
+	}
+	future := time.Now().Add(10 * time.Minute)
+	past := time.Now().Add(-10 * time.Minute)
+
+	tests := []struct {
+		name         string
+		payload      Payload
+		checkExpires bool
+		want         VerifySolutionResult
+	}{
+		{"Valid", newPayload(t, future, 10), true, VerifySolutionResult{Verified: true}},
+		{"WrongNumber", newPayload(t, future, 11), true, VerifySolutionResult{}},
+		{"ExpiredValidSolution", newPayload(t, past, 10), true, VerifySolutionResult{Expired: true}},
+		{"ExpiredWrongNumber", newPayload(t, past, 11), true, VerifySolutionResult{Expired: true}},
+		{"ExpiredNotChecked", newPayload(t, past, 10), false, VerifySolutionResult{Verified: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := VerifySolutionWithResult(tt.payload, "test-key", tt.checkExpires)
+			if err != nil {
+				t.Fatalf("VerifySolutionWithResult() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("VerifySolutionWithResult() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestVerifySolutionSaltSplicing(t *testing.T) {
 	expires := time.Now().Add(10 * time.Minute)
 	var num int64 = 123
