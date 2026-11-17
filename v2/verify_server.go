@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,18 +25,30 @@ const (
 )
 
 // VerifyServerOptions configures a remote verification request to the
-// ALTCHA Sentinel `/v1/verify/signature` API.
+// ALTCHA Sentinel `/v2/verify/signature` (Sentinel v2) or
+// `/v1/verify/signature` (Sentinel v1, and the Sentinel v2 `/v1` alias) API.
 type VerifyServerOptions struct {
-	// URL is the full Sentinel verify endpoint, e.g. "https://sentinel.example.com/v1/verify/signature".
+	// URL is the full Sentinel verify endpoint:
+	// "https://sentinel.example.com/v2/verify/signature" (Sentinel v2) or
+	// "https://sentinel.example.com/v1/verify/signature" (Sentinel v1).
 	URL string
-	// Payload is the payload received from the client (POST /v1/verify),
+	// Payload is the payload received from the client (POST /v2/verify),
 	// typically the raw base64 string, but any JSON-marshalable value is accepted.
 	Payload interface{}
-	// Secret is the API key secret. If set, Sentinel checks it matches the payload's API key.
+	// APIKey is, for Sentinel v2, the id of a restricted or full API key of the
+	// account that owns the payload's API key. When set, the request is
+	// authenticated with HTTP Basic APIKey:Secret and Secret is not sent in the
+	// body, as /v2/verify/signature requires. Leave empty for Sentinel v1.
+	APIKey string
+	// Secret is the API key secret. With APIKey (Sentinel v2), the secret of
+	// that key, sent as the Basic password; required. Without APIKey
+	// (Sentinel v1), optional and sent as "secret" in the body: Sentinel checks
+	// it matches the payload's API key.
 	Secret string
 	// HTTPClient performs the requests. Defaults to http.DefaultClient.
 	HTTPClient *http.Client
-	// Headers are additional headers sent with each request.
+	// Headers are additional headers sent with each request. An Authorization
+	// header is replaced when APIKey is set.
 	Headers map[string]string
 	// Timeout bounds each individual attempt. Defaults to 10s.
 	Timeout time.Duration
@@ -49,14 +62,18 @@ type VerifyServerOptions struct {
 
 // VerifyServerResult is the outcome of a remote Sentinel verification request.
 type VerifyServerResult struct {
-	Verified         bool                             `json:"verified"`
+	Verified bool `json:"verified"`
+	// Reason is why Sentinel rejected the payload, e.g. PAYLOAD_ALREADY_USED,
+	// INVALID_PAYLOAD, API_KEY_NOT_ALLOWED (v2) or WRONG_API_KEY_SECRET (v1);
+	// for an HTTP 400 response, its "error".
 	Reason           string                           `json:"reason,omitempty"`
 	APIKey           string                           `json:"apiKey,omitempty"`
 	VerificationData *ServerSignatureVerificationData `json:"verificationData,omitempty"`
 }
 
 // HTTPStatusError is returned when Sentinel responds with an unexpected
-// (non-2xx, non-400) HTTP status. Use errors.As to inspect it.
+// (non-2xx, non-400) HTTP status, e.g. Sentinel v2's 401/403 for missing or
+// wrong credentials. Use errors.As to inspect it.
 type HTTPStatusError struct {
 	StatusCode int
 	Status     string
@@ -67,18 +84,24 @@ func (e *HTTPStatusError) Error() string {
 }
 
 // VerifyServer verifies a payload remotely via the ALTCHA Sentinel
-// `/v1/verify/signature` API, retrying on transport failures according to
+// `/v2/verify/signature` (with options.APIKey) or `/v1/verify/signature` API,
+// retrying on transport failures according to
 // options.Retries/RetryDelay/RetryBackoff.
 //
 // A definitive verdict from Sentinel (including an HTTP 400 rejection) is
 // returned as (VerifyServerResult, nil); the verdict itself is carried in
-// Result.Verified/Result.Reason. A transport failure that survives all
-// retries — network error, unexpected HTTP status, or context cancellation —
-// is returned as (VerifyServerResult{}, error); use errors.As for
-// *HTTPStatusError, or errors.Is for context errors.
+// Result.Verified/Result.Reason. Any other 4xx status (e.g. Sentinel v2's
+// 401/403 for missing or wrong credentials, or 429) fails at once without
+// retrying. A network error, other unexpected HTTP status or context
+// cancellation that survives all retries is returned as
+// (VerifyServerResult{}, error); use errors.As for *HTTPStatusError, or
+// errors.Is for context errors.
 func VerifyServer(ctx context.Context, options VerifyServerOptions) (VerifyServerResult, error) {
 	if options.URL == "" {
 		return VerifyServerResult{}, fmt.Errorf("altcha: URL parameter is required")
+	}
+	if options.APIKey != "" && options.Secret == "" {
+		return VerifyServerResult{}, fmt.Errorf("altcha: Secret parameter is required when APIKey is set")
 	}
 
 	client := options.HTTPClient
@@ -98,10 +121,14 @@ func VerifyServer(ctx context.Context, options VerifyServerOptions) (VerifyServe
 		backoff = RetryBackoffExponential
 	}
 
+	bodySecret := options.Secret
+	if options.APIKey != "" {
+		bodySecret = ""
+	}
 	body, err := json.Marshal(struct {
 		Payload interface{} `json:"payload"`
 		Secret  string      `json:"secret,omitempty"`
-	}{options.Payload, options.Secret})
+	}{options.Payload, bodySecret})
 	if err != nil {
 		return VerifyServerResult{}, fmt.Errorf("altcha: failed to marshal payload: %w", err)
 	}
@@ -112,9 +139,13 @@ func VerifyServer(ctx context.Context, options VerifyServerOptions) (VerifyServe
 			return VerifyServerResult{}, fmt.Errorf("altcha: verify server request aborted: %w", err)
 		}
 
-		result, err := doVerifyServerAttempt(ctx, client, options.URL, options.Headers, body, timeout)
+		result, err := doVerifyServerAttempt(ctx, client, options, body, timeout)
 		if err == nil {
 			return result, nil
+		}
+		var statusErr *HTTPStatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode >= 400 && statusErr.StatusCode < 500 {
+			return VerifyServerResult{}, fmt.Errorf("altcha: verify server request rejected: %w", err)
 		}
 		lastErr = err
 
@@ -140,18 +171,21 @@ func VerifyServer(ctx context.Context, options VerifyServerOptions) (VerifyServe
 
 // doVerifyServerAttempt performs a single HTTP round trip. A nil error means
 // a definitive verdict was obtained (including an HTTP 400 rejection); a
-// non-nil error means the attempt is retryable.
-func doVerifyServerAttempt(ctx context.Context, client *http.Client, url string, headers map[string]string, body []byte, timeout time.Duration) (VerifyServerResult, error) {
+// non-nil error means the attempt failed (retryable unless a 4xx status).
+func doVerifyServerAttempt(ctx context.Context, client *http.Client, options VerifyServerOptions, body []byte, timeout time.Duration) (VerifyServerResult, error) {
 	attemptCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, options.URL, bytes.NewReader(body))
 	if err != nil {
 		return VerifyServerResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
+	for k, v := range options.Headers {
 		req.Header.Set(k, v)
+	}
+	if options.APIKey != "" {
+		req.SetBasicAuth(options.APIKey, options.Secret)
 	}
 
 	resp, err := client.Do(req)

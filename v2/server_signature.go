@@ -28,6 +28,8 @@ type ServerSignaturePayload struct {
 // report it. The same struct decodes the nested JSON returned by
 // /v1/verify/signature ({"location":{"countryCode":"US"}}).
 type ServerSignatureVerificationData struct {
+	// ChallengeAlgorithm is "challengeAlgorithm" (Sentinel v1) or
+	// "challenge.algorithm" (Sentinel v2); the v2 key takes precedence.
 	ChallengeAlgorithm string                `json:"challengeAlgorithm,omitempty"`
 	Classification     string                `json:"classification,omitempty"`
 	Device             *VerificationDevice   `json:"device,omitempty"`
@@ -160,7 +162,11 @@ func jsonText(v interface{}) (string, bool) {
 func (vd *ServerSignatureVerificationData) set(key, value string) {
 	value = strings.TrimSpace(value)
 	switch key {
-	case "challengeAlgorithm":
+	case "challengeAlgorithm": // Sentinel v1
+		if vd.ChallengeAlgorithm == "" {
+			vd.ChallengeAlgorithm = value
+		}
+	case "challenge.algorithm": // Sentinel v2
 		vd.ChallengeAlgorithm = value
 	case "classification":
 		vd.Classification = value

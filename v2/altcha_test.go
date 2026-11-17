@@ -1161,6 +1161,32 @@ func TestParseVerificationDataSentinelGroups(t *testing.T) {
 	}
 }
 
+func TestParseVerificationDataChallengeAlgorithm(t *testing.T) {
+	// Sentinel v2 signs challenge.algorithm instead of challengeAlgorithm.
+	got := ParseVerificationData("challenge.algorithm=PBKDF2%2FSHA-256&challenge.issued=1791856880&verified=true")
+	if got == nil || got.ChallengeAlgorithm != "PBKDF2/SHA-256" {
+		t.Fatalf("ChallengeAlgorithm = %+v, want PBKDF2/SHA-256", got)
+	}
+	if _, ok := got.Extra["challenge.algorithm"]; ok {
+		t.Error("challenge.algorithm should not be in Extra")
+	}
+
+	// With both keys, the v2 key wins whatever the order.
+	for _, keys := range [][2]string{{"challengeAlgorithm", "challenge.algorithm"}, {"challenge.algorithm", "challengeAlgorithm"}} {
+		vd := &ServerSignatureVerificationData{}
+		for _, k := range keys {
+			value := "SHA-256"
+			if k == "challenge.algorithm" {
+				value = "ARGON2ID"
+			}
+			vd.set(k, value)
+		}
+		if vd.ChallengeAlgorithm != "ARGON2ID" {
+			t.Errorf("order %v: ChallengeAlgorithm = %q, want ARGON2ID", keys, vd.ChallengeAlgorithm)
+		}
+	}
+}
+
 func TestVerifyFieldsHash(t *testing.T) {
 	formData := map[string][]string{
 		"name":  {"John Doe"},

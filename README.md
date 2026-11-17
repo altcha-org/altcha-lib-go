@@ -61,13 +61,39 @@ if result.Verified {
 
 ### Remote verification (Sentinel)
 
-Verify a payload remotely via the ALTCHA Sentinel `/v1/verify/signature` API instead of verifying locally. Timeout and retries are configurable per call:
+Verify a payload remotely via the ALTCHA Sentinel API instead of verifying locally. Both Sentinel v2 (`/v2/verify/signature`) and Sentinel v1 (`/v1/verify/signature`) are supported; the version is selected by `URL` and whether `APIKey` is set. Timeout and retries are configurable per call.
+
+#### Sentinel v2
+
+Sentinel v2 authenticates the request with a `restricted` or `full` API key of the account that owns the payload's (public) key. Set `APIKey` and `Secret` to its id and secret: they are sent as HTTP Basic credentials, and nothing is sent as `secret` in the body. `APIKey` without `Secret` returns an error before any request is sent.
+
+```go
+result, err := altcha.VerifyServer(ctx, altcha.VerifyServerOptions{
+    URL:          "https://sentinel.example.com/v2/verify/signature",
+    Payload:      payload,   // raw payload string from POST /v2/verify
+    APIKey:       "key_...", // restricted or full API key
+    Secret:       "sec_...", // its secret
+    Timeout:      5 * time.Second,
+    Retries:      2,
+    RetryBackoff: altcha.RetryBackoffExponential,
+})
+if err != nil {
+    // transport failure: network error, unexpected HTTP status (e.g. 401/403), or ctx cancellation
+}
+if result.Verified {
+    // valid
+}
+```
+
+#### Sentinel v1
+
+For Sentinel v1 (and the `/v1/verify/signature` alias Sentinel v2 serves with `v1_compat`), leave `APIKey` empty. `Secret` is optional: it is sent as `secret` in the body, and Sentinel checks that it is the secret of the payload's API key (`WRONG_API_KEY_SECRET` otherwise).
 
 ```go
 result, err := altcha.VerifyServer(ctx, altcha.VerifyServerOptions{
     URL:          "https://sentinel.example.com/v1/verify/signature",
-    Payload:      payload, // raw payload string from POST /v1/verify
-    Secret:       "your-api-key-secret",
+    Payload:      payload,               // raw payload string from POST /v1/verify
+    Secret:       "your-api-key-secret", // optional
     Timeout:      5 * time.Second,
     Retries:      2,
     RetryBackoff: altcha.RetryBackoffExponential,
@@ -80,9 +106,13 @@ if result.Verified {
 }
 ```
 
-A definitive verdict from Sentinel (including a rejection) is returned as `(VerifyServerResult, nil)`; check `result.Verified`/`result.Reason`. A transport failure that survives all retries is returned as an `error` — use `errors.As` for `*altcha.HTTPStatusError`, or `errors.Is` for context errors.
+#### Results and errors
 
-See [`examples/sentinel`](./v2/examples/sentinel) for an HTTP server with a `POST /submit` endpoint that verifies Sentinel payloads this way.
+A definitive verdict from Sentinel (including a rejection, e.g. `PAYLOAD_ALREADY_USED`, `INVALID_PAYLOAD`, `API_KEY_NOT_ALLOWED` (v2: the payload belongs to another account than `APIKey`) or `WRONG_API_KEY_SECRET` (v1), and an HTTP 400 response) is returned as `(VerifyServerResult, nil)`; check `result.Verified`/`result.Reason`. Other 4xx statuses (e.g. Sentinel v2's `401`/`403` for missing, wrong or `public` credentials, `429`) are not retried and are returned as an `error` at once. A network error or other unexpected status that survives all retries is returned as an `error` too — use `errors.As` for `*altcha.HTTPStatusError`, or `errors.Is` for context errors.
+
+`result.VerificationData` decodes both versions' response. `ChallengeAlgorithm` is filled from v1's `challengeAlgorithm` or v2's `challenge.algorithm`. Sentinel v2's other new keys (`challenge.issued`, `challenge.protectionLevel`, `his.automation`, `device.os`, `ip.countryCode`, …) are in `VerificationData.Extra`, keyed by their dotted name.
+
+See [`examples/sentinel`](./v2/examples/sentinel) for an HTTP server with a `POST /submit` endpoint that verifies Sentinel payloads this way, with either version.
 
 ### HTTP server example
 

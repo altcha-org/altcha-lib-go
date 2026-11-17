@@ -3,6 +3,16 @@
 // There is no /challenge endpoint: point the widget's challenge URL at your
 // Sentinel instance, which issues and signs the challenges. Sentinel also
 // tracks used payloads, so each one verifies only once.
+//
+// Sentinel v2 (default):
+//
+//	SENTINEL_URL=https://sentinel.example.com/v2/verify/signature \
+//	SENTINEL_API_KEY=key_... SENTINEL_API_KEY_SECRET=sec_... go run .
+//
+// Sentinel v1 (SENTINEL_API_KEY unset, secret optional):
+//
+//	SENTINEL_URL=https://sentinel.example.com/v1/verify/signature \
+//	SENTINEL_API_KEY_SECRET=sec_... go run .
 package main
 
 import (
@@ -19,13 +29,17 @@ func main() {
 	// URL of your Sentinel instance's verify/signature endpoint.
 	sentinelURL := os.Getenv("SENTINEL_URL")
 	if sentinelURL == "" {
-		sentinelURL = "https://sentinel.example.com/v1/verify/signature"
+		sentinelURL = "https://sentinel.example.com/v2/verify/signature"
 	}
-	// API key secret, optional: Sentinel checks it against the payload's API key.
+	// Sentinel v2: id and secret of a restricted or full API key of the account
+	// that owns the widget's (public) key, sent as HTTP Basic credentials.
+	// Sentinel v1 (/v1/verify/signature): leave SENTINEL_API_KEY empty; the
+	// secret is then optional and Sentinel checks it against the payload's API key.
+	apiKey := os.Getenv("SENTINEL_API_KEY")
 	apiKeySecret := os.Getenv("SENTINEL_API_KEY_SECRET")
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /submit", handleSubmit(sentinelURL, apiKeySecret))
+	mux.HandleFunc("POST /submit", handleSubmit(sentinelURL, apiKey, apiKeySecret))
 
 	addr := ":3000"
 	log.Printf("listening on %s", addr)
@@ -52,8 +66,8 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 // handleSubmit verifies the Sentinel payload submitted with a form.
 // The form must include an "altcha" field with the payload the widget
-// received from Sentinel's POST /v1/verify.
-func handleSubmit(sentinelURL string, apiKeySecret string) http.HandlerFunc {
+// received from Sentinel's POST /v2/verify.
+func handleSubmit(sentinelURL string, apiKey string, apiKeySecret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form data", http.StatusBadRequest)
@@ -69,6 +83,7 @@ func handleSubmit(sentinelURL string, apiKeySecret string) http.HandlerFunc {
 		result, err := altcha.VerifyServer(r.Context(), altcha.VerifyServerOptions{
 			URL:     sentinelURL,
 			Payload: payload,
+			APIKey:  apiKey,
 			Secret:  apiKeySecret,
 			Timeout: 10 * time.Second,
 			Retries: 2,
